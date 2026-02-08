@@ -107,6 +107,10 @@ async def run_search(
 
             # Call LLM with tools
             try:
+                if verbose:
+                    print(f"[LLM] Calling {config.model}...")
+                    print(f"[LLM] Messages count: {len(messages)}")
+
                 response = await client.chat.completions.create(
                     model=config.model,
                     messages=messages,
@@ -114,8 +118,18 @@ async def run_search(
                     tool_choice="auto",
                     max_tokens=config.max_output_tokens,
                 )
+
+                if verbose:
+                    print(f"[LLM] Response received")
+                    if response.usage:
+                        print(
+                            f"[LLM] Tokens: {response.usage.total_tokens} (prompt: {response.usage.prompt_tokens}, completion: {response.usage.completion_tokens})"
+                        )
             except Exception as e:
-                report_progress(f"LLM API error: {e}", current_iteration)
+                error_msg = f"LLM API error: {e}"
+                report_progress(error_msg, current_iteration)
+                if verbose:
+                    print(f"[LLM] ❌ ERROR: {error_msg}")
                 final_answer = _force_answer(messages, f"API error: {e}")
                 break
 
@@ -148,7 +162,51 @@ async def run_search(
                         f"Searching for: {', '.join(queries)}",
                         current_iteration,
                     )
-                    result = execute_tool(tool_name, tool_args, config.jina_key)
+                    result = await execute_tool(
+                        tool_name, tool_args, config.jina_key, verbose
+                    )
+
+                    if verbose:
+                        print(
+                            f"[Tool Result] web_search returned {len(result.get('searches', []))} results"
+                        )
+                        for search in result.get("searches", []):
+                            if "error" in search:
+                                print(
+                                    f"  ❌ Error for '{search.get('query')}': {search['error']}"
+                                )
+                            else:
+                                print(
+                                    f"  ✓ '{search.get('query')}' returned {len(search.get('results', []))} results"
+                                )
+
+                    # Add tool result to conversation
+                    messages.append(
+                        {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": tool_call.id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": tool_name,
+                                        "arguments": tool_call.function.arguments,
+                                    },
+                                }
+                            ],
+                        }
+                    )
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": json.dumps(result),
+                        }
+                    )
+                    result = await execute_tool(
+                        tool_name, tool_args, config.jina_key, verbose
+                    )
 
                     # Add tool result to conversation
                     messages.append(
@@ -178,7 +236,52 @@ async def run_search(
                 elif tool_name == "web_get":
                     urls = tool_args.get("urls", [])
                     report_progress(f"Reading {len(urls)} pages...", current_iteration)
-                    result = execute_tool(tool_name, tool_args, config.jina_key)
+                    result = await execute_tool(
+                        tool_name, tool_args, config.jina_key, verbose
+                    )
+
+                    if verbose:
+                        print(
+                            f"[Tool Result] web_get returned {len(result.get('pages', []))} pages"
+                        )
+                        for page in result.get("pages", []):
+                            if "error" in page:
+                                print(
+                                    f"  ❌ Error for '{page.get('url')}': {page['error']}"
+                                )
+                            else:
+                                content_len = len(page.get("content", ""))
+                                print(
+                                    f"  ✓ '{page.get('url')}' fetched {content_len} chars"
+                                )
+
+                    # Track URLs
+                    urls_fetched.update(urls)
+
+                    # Add tool result to conversation
+                    messages.append(
+                        {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": tool_call.id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": tool_name,
+                                        "arguments": tool_call.function.arguments,
+                                    },
+                                }
+                            ],
+                        }
+                    )
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": json.dumps(result),
+                        }
+                    )
 
                     # Track URLs
                     urls_fetched.update(urls)
@@ -354,44 +457,20 @@ def run_search_sync(
     Returns:
         SearchResult with answer and metadata
     """
-    # Check if we're already in an event loop (e.g., Jupyter, IPython, nested async)
+    # Use a new event loop to avoid conflicts with existing loops
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     try:
-        loop = asyncio.get_running_loop()
-        # We're in an event loop, use nest_asyncio or raise error
-        if loop.is_running():
-            # Try to use nest_asyncio if available
-            try:
-                import nest_asyncio
-
-                nest_asyncio.apply()
-                return asyncio.run(
-                    run_search(
-                        query=query,
-                        config=config,
-                        effort=effort,
-                        max_iter=max_iter,
-                        max_timeout=max_timeout,
-                        verbose=verbose,
-                        progress_callback=progress_callback,
-                    )
-                )
-            except ImportError:
-                raise RuntimeError(
-                    "Cannot run async search from within an async context. "
-                    "Install nest_asyncio: pip install nest_asyncio"
-                )
-    except RuntimeError:
-        # No event loop running, safe to use asyncio.run()
-        pass
-
-    return asyncio.run(
-        run_search(
-            query=query,
-            config=config,
-            effort=effort,
-            max_iter=max_iter,
-            max_timeout=max_timeout,
-            verbose=verbose,
-            progress_callback=progress_callback,
+        return loop.run_until_complete(
+            run_search(
+                query=query,
+                config=config,
+                effort=effort,
+                max_iter=max_iter,
+                max_timeout=max_timeout,
+                verbose=verbose,
+                progress_callback=progress_callback,
+            )
         )
-    )
+    finally:
+        loop.close()
