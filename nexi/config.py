@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import secrets
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +14,6 @@ import questionary
 # Constants
 CONFIG_DIR = Path.home() / ".local" / "share" / "nexi"
 CONFIG_FILE = CONFIG_DIR / "config.json"
-PROMPTS_DIR = CONFIG_DIR / "prompts"
 
 EFFORT_LEVELS = {
     "s": {"max_iter": 8, "description": "Quick search"},
@@ -28,6 +28,54 @@ DEFAULT_CONFIG = {
     "max_timeout": 240,
     "max_output_tokens": 8192,
 }
+
+EXTRACTOR_PROMPT_TEMPLATE = """You are a precise information extractor.
+
+TASK: Extract content from this webpage that answers: "{query}"
+
+{instructions}
+
+EXTRACT:
+- Key facts, claims, and data points
+- Relevant quotes (keep exact wording)
+- Technical details, numbers, dates, examples
+- Code snippets if present
+- Important caveats or contradictions
+
+IGNORE:
+- Navigation, ads, author bios, footers
+- Generic introductions/conclusions
+- Off-topic sections
+
+FORMAT:
+Use markdown. Keep useful headers for structure.
+Target 400-600 words of the most relevant content.
+
+If page has limited relevance, extract whatever IS relevant - even if brief.
+"""
+
+DEFAULT_SYSTEM_PROMPT_TEMPLATE = """You are a helpful research assistant. Your goal is to answer the user's query thoroughly and accurately.
+
+Current date: {current_date}
+Effort level: {effort_description}
+Maximum iterations available: {max_iter}
+
+You have access to these tools:
+- web_search: Search the web for information (supports multiple parallel queries)
+- web_get: Fetch full content from specific URLs (supports multiple URLs)
+- final_answer: Provide the final answer and end the search
+
+Guidelines:
+1. Start with web_search to gather initial information
+2. Use parallel queries to explore different angles efficiently
+3. Use web_get to read full pages for detailed information when needed
+4. Synthesize information from multiple sources
+5. Call final_answer when you have a complete answer
+6. You have up to {max_iter} iterations - use them wisely
+7. If you reach max iterations, provide your best answer with available information
+
+Always respond with a tool call.
+"""
 
 
 @dataclass
@@ -229,9 +277,6 @@ def run_first_time_setup() -> Config:
     # Save config
     save_config(config)
 
-    # Create prompt templates
-    create_default_prompts()
-
     print(f"\n✨ Configuration saved to {CONFIG_FILE}")
 
     return config
@@ -251,93 +296,31 @@ def ensure_config() -> Config:
         return run_first_time_setup()
 
 
-def create_default_prompts() -> None:
-    """Create default prompt template files."""
-    PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
-
-    prompts = {
-        "quick.txt": """You are a helpful research assistant. Your goal is to answer the user's query quickly and efficiently.
-
-You have access to these tools:
-- web_search: Search the web for information
-- web_get: Fetch full content from specific URLs
-- final_answer: Provide the final answer and end the search
-
-Guidelines:
-1. Use web_search to find relevant information
-2. Use web_get to read full pages when needed
-3. Call final_answer when you have enough information
-4. Be concise - you have limited iterations (8 max)
-5. If you reach max iterations, provide your best answer with what you have
-
-Always respond with a tool call.
-""",
-        "balanced.txt": """You are a thorough research assistant. Your goal is to provide comprehensive, accurate answers.
-
-You have access to these tools:
-- web_search: Search the web for information (supports multiple parallel queries)
-- web_get: Fetch full content from specific URLs (supports multiple URLs)
-- final_answer: Provide the final answer and end the search
-
-Guidelines:
-1. Start with web_search to gather initial information
-2. Use parallel queries to explore different angles
-3. Use web_get to read full pages for detailed information
-4. Synthesize information from multiple sources
-5. Call final_answer when you have a complete answer
-6. You have up to 16 iterations - use them wisely
-7. If you reach max iterations, provide your best answer with available information
-
-Always respond with a tool call.
-""",
-        "thorough.txt": """You are an expert research assistant conducting deep investigation. Your goal is to provide exhaustive, well-researched answers.
-
-You have access to these tools:
-- web_search: Search the web for information (supports multiple parallel queries)
-- web_get: Fetch full content from specific URLs (supports multiple URLs)
-- final_answer: Provide the final answer and end the search
-
-Guidelines:
-1. Conduct comprehensive research with multiple search angles
-2. Use parallel queries to maximize information gathering
-3. Read full pages to get complete context
-4. Cross-reference information from multiple sources
-5. Explore related topics and edge cases
-6. Provide detailed, nuanced answers with citations
-7. You have up to 32 iterations - be thorough but efficient
-8. If you reach max iterations, summarize what you've found and note any gaps
-
-Always respond with a tool call.
-""",
-    }
-
-    for filename, content in prompts.items():
-        filepath = PROMPTS_DIR / filename
-        if not filepath.exists():
-            with open(filepath, "w", encoding="utf-8") as f:
-                f.write(content)
-
-
-def get_prompt_for_effort(effort: str) -> str:
-    """Get system prompt for effort level.
+def get_system_prompt(
+    max_iter: int, effort: str = "m", prompt_template: str | None = None
+) -> str:
+    """Get formatted system prompt.
 
     Args:
-        effort: One of 's', 'm', 'l'
+        max_iter: Maximum number of iterations allowed
+        effort: Effort level (s/m/l) - affects how thorough the search should be
+        prompt_template: Optional custom prompt template. Uses default if None.
 
     Returns:
-        System prompt text
+        Formatted system prompt with current date, effort level, and max_iter substituted
     """
-    effort_to_file = {
-        "s": "quick.txt",
-        "m": "balanced.txt",
-        "l": "thorough.txt",
+    template = prompt_template or DEFAULT_SYSTEM_PROMPT_TEMPLATE
+    current_date = datetime.now().strftime("%Y-%m-%d")
+
+    effort_descriptions = {
+        "s": "small - quick search, be concise",
+        "m": "medium - balanced thoroughness",
+        "l": "large - exhaustive research, explore deeply",
     }
+    effort_description = effort_descriptions.get(effort, effort_descriptions["m"])
 
-    filename = effort_to_file.get(effort, "balanced.txt")
-    prompt_file = PROMPTS_DIR / filename
-
-    if not prompt_file.exists():
-        create_default_prompts()
-
-    with open(prompt_file, "r", encoding="utf-8") as f:
-        return f.read()
+    return template.format(
+        current_date=current_date,
+        max_iter=max_iter,
+        effort_description=effort_description,
+    )

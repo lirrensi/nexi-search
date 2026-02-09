@@ -9,10 +9,18 @@ from nexi.config import (
     load_config,
     save_config,
     run_first_time_setup,
-    get_prompt_for_effort,
+    get_system_prompt,
+    DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+    EXTRACTOR_PROMPT_TEMPLATE,
     EFFORT_LEVELS,
 )
-from nexi.tools import TOOLS, execute_tool, web_search, web_get
+from nexi.tools import (
+    TOOLS,
+    clear_url_cache,
+    execute_tool,
+    web_search,
+    web_get,
+)
 from nexi.history import (
     HistoryEntry,
     get_history_path,
@@ -50,9 +58,12 @@ __all__ = [
     "load_config",
     "save_config",
     "run_first_time_setup",
-    "get_prompt_for_effort",
+    "get_system_prompt",
+    "DEFAULT_SYSTEM_PROMPT_TEMPLATE",
+    "EXTRACTOR_PROMPT_TEMPLATE",
     "EFFORT_LEVELS",
     "TOOLS",
+    "clear_url_cache",
     "execute_tool",
     "web_search",
     "web_get",

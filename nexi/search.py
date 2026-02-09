@@ -11,8 +11,8 @@ from typing import Any, Callable
 import httpx
 from openai import AsyncOpenAI
 
-from nexi.config import Config, EFFORT_LEVELS, get_prompt_for_effort
-from nexi.tools import execute_tool
+from nexi.config import Config, EFFORT_LEVELS, get_system_prompt
+from nexi.tools import clear_url_cache, execute_tool
 
 
 @dataclass
@@ -55,15 +55,25 @@ async def run_search(
     """
     start_time = time.time()
 
-    # Determine max iterations
+    # Clear URL cache at start of search session
+    clear_url_cache()
+
+    # Determine max iterations with fallback to medium
     if max_iter is None:
-        max_iter = EFFORT_LEVELS.get(effort, EFFORT_LEVELS["m"])["max_iter"]
+        try:
+            max_iter = EFFORT_LEVELS.get(effort, EFFORT_LEVELS["m"])["max_iter"]
+        except (KeyError, TypeError):
+            max_iter = EFFORT_LEVELS["m"]["max_iter"]
+
+    # Ensure max_iter is an int
+    if not isinstance(max_iter, int):
+        max_iter = EFFORT_LEVELS["m"]["max_iter"]
 
     # Determine timeout
     timeout = max_timeout if max_timeout is not None else config.max_timeout
 
     # Load system prompt
-    system_prompt = get_prompt_for_effort(effort)
+    system_prompt = get_system_prompt(max_iter, effort)
 
     # Initialize OpenAI client
     client = AsyncOpenAI(
@@ -204,40 +214,18 @@ async def run_search(
                             "content": json.dumps(result),
                         }
                     )
-                    result = await execute_tool(
-                        tool_name, tool_args, config.jina_key, verbose
-                    )
-
-                    # Add tool result to conversation
-                    messages.append(
-                        {
-                            "role": "assistant",
-                            "content": None,
-                            "tool_calls": [
-                                {
-                                    "id": tool_call.id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": tool_name,
-                                        "arguments": tool_call.function.arguments,
-                                    },
-                                }
-                            ],
-                        }
-                    )
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": json.dumps(result),
-                        }
-                    )
 
                 elif tool_name == "web_get":
                     urls = tool_args.get("urls", [])
                     report_progress(f"Reading {len(urls)} pages...", current_iteration)
                     result = await execute_tool(
-                        tool_name, tool_args, config.jina_key, verbose
+                        tool_name,
+                        tool_args,
+                        config.jina_key,
+                        verbose,
+                        client,
+                        config.model,
+                        query,
                     )
 
                     if verbose:
@@ -254,34 +242,6 @@ async def run_search(
                                 print(
                                     f"  ✓ '{page.get('url')}' fetched {content_len} chars"
                                 )
-
-                    # Track URLs
-                    urls_fetched.update(urls)
-
-                    # Add tool result to conversation
-                    messages.append(
-                        {
-                            "role": "assistant",
-                            "content": None,
-                            "tool_calls": [
-                                {
-                                    "id": tool_call.id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": tool_name,
-                                        "arguments": tool_call.function.arguments,
-                                    },
-                                }
-                            ],
-                        }
-                    )
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": json.dumps(result),
-                        }
-                    )
 
                     # Track URLs
                     urls_fetched.update(urls)
@@ -369,7 +329,7 @@ def _get_tool_schemas() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "web_get",
-                "description": "Fetch full content from URLs using Jina Reader. Automatically converts PDFs, HTML to clean markdown. Supports multiple URLs in parallel.",
+                "description": "Fetch and process content from URLs using Jina Reader. Automatically converts PDFs, HTML to clean markdown. Supports multiple URLs in parallel. When get_full is false (default), content is processed via LLM summarizer using the provided instructions to extract/summarize specific information. When get_full is true, returns the raw page content without any filtering.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -379,7 +339,16 @@ def _get_tool_schemas() -> list[dict[str, Any]]:
                             "description": "List of URLs to fetch content from",
                             "minItems": 1,
                             "maxItems": 8,
-                        }
+                        },
+                        "instructions": {
+                            "type": "string",
+                            "description": "Custom prompt guiding the LLM summarizer on what to look for. Make instructions explicit, self-contained, and dense—general for broad overviews or specific for targeted details. This helps chain crawls: If the summary lists next URLs, you can browse those next. Always keep requests focused to avoid vague outputs. Only used when get_full is false.",
+                        },
+                        "get_full": {
+                            "type": "boolean",
+                            "description": "If true, returns the full page content without LLM processing. If false (default), content is summarized/extracted based on instructions.",
+                            "default": False,
+                        },
                     },
                     "required": ["urls"],
                 },
