@@ -27,6 +27,11 @@ DEFAULT_CONFIG = {
     "default_effort": "m",
     "max_timeout": 240,
     "max_output_tokens": 8192,
+    "max_context": 128000,
+    "auto_compact_thresh": 0.9,
+    "compact_target_words": 5000,
+    "preserve_last_n_messages": 3,
+    "tokenizer_encoding": "cl100k_base",
 }
 
 EXTRACTOR_PROMPT_TEMPLATE = """You are a precise information extractor.
@@ -54,7 +59,7 @@ Target 400-600 words of the most relevant content.
 If page has limited relevance, extract whatever IS relevant - even if brief.
 """
 
-DEFAULT_SYSTEM_PROMPT_TEMPLATE = """You are a helpful research assistant. Your goal is to answer the user's query thoroughly and accurately.
+DEFAULT_SYSTEM_PROMPT_TEMPLATE = """You are a helpful research assistant. Your goal is to answer the user\'s query thoroughly and accurately.
 
 Current date: {current_date}
 Effort level: {effort_description}
@@ -77,6 +82,28 @@ Guidelines:
 Always respond with a tool call.
 """
 
+COMPACTION_PROMPT_TEMPLATE = """Create a dense, factual text summary of research findings.
+
+PRESERVE EXACTLY:
+- All numbers, dates, statistics
+- Technical terms and proper nouns
+- Direct quotes (keep verbatim)
+- Specific claims with nuance
+
+MERGE:
+- Duplicate information across sources
+- Related findings into coherent sections
+
+DO NOT include URLs or links in summary - those are tracked separately.
+
+Output plain text summary only. Target {target_words} words maximum.
+
+Original query: {original_query}
+
+Content to summarize:
+{content}
+"""
+
 
 @dataclass
 class Config:
@@ -89,6 +116,11 @@ class Config:
     default_effort: str
     max_timeout: int
     max_output_tokens: int
+    max_context: int = 128000
+    auto_compact_thresh: float = 0.9
+    compact_target_words: int = 5000
+    preserve_last_n_messages: int = 3
+    tokenizer_encoding: str = "cl100k_base"
 
     def to_dict(self) -> dict[str, Any]:
         """Convert config to dictionary."""
@@ -167,6 +199,38 @@ def validate_config(config: dict[str, Any]) -> tuple[bool, list[str]]:
     tokens = config.get("max_output_tokens", 0)
     if not isinstance(tokens, int) or tokens <= 0:
         errors.append("max_output_tokens must be a positive integer")
+
+    # Validate max_context (optional)
+    max_context = config.get("max_context")
+    if max_context is not None:
+        if not isinstance(max_context, int) or max_context <= 0:
+            errors.append("max_context must be a positive integer")
+
+    # Validate auto_compact_thresh (optional)
+    auto_compact_thresh = config.get("auto_compact_thresh")
+    if auto_compact_thresh is not None:
+        if not isinstance(auto_compact_thresh, (int, float)):
+            errors.append("auto_compact_thresh must be a number")
+        elif not (0.0 <= auto_compact_thresh <= 1.0):
+            errors.append("auto_compact_thresh must be between 0.0 and 1.0")
+
+    # Validate compact_target_words (optional)
+    compact_target_words = config.get("compact_target_words")
+    if compact_target_words is not None:
+        if not isinstance(compact_target_words, int) or compact_target_words <= 0:
+            errors.append("compact_target_words must be a positive integer")
+
+    # Validate preserve_last_n_messages (optional)
+    preserve_last_n = config.get("preserve_last_n_messages")
+    if preserve_last_n is not None:
+        if not isinstance(preserve_last_n, int) or preserve_last_n < 0:
+            errors.append("preserve_last_n_messages must be a non-negative integer")
+
+    # Validate tokenizer_encoding (optional)
+    tokenizer_encoding = config.get("tokenizer_encoding")
+    if tokenizer_encoding is not None:
+        if not isinstance(tokenizer_encoding, str) or not tokenizer_encoding.strip():
+            errors.append("tokenizer_encoding must be a non-empty string")
 
     return len(errors) == 0, errors
 
@@ -261,6 +325,48 @@ def run_first_time_setup() -> Config:
         default=str(DEFAULT_CONFIG["max_output_tokens"]),
     ).ask()
 
+    # Context management settings (optional)
+    print("\n--- Context Management (Optional) ---")
+    print(
+        "These settings control automatic conversation compaction to prevent context overflow."
+    )
+    print("Press Enter to use defaults for all context settings.\n")
+
+    # Max context
+    max_context = questionary.text(
+        "Max context window (tokens):",
+        default=str(DEFAULT_CONFIG["max_context"]),
+        instruction="Model's context limit (e.g., 128000 for GPT-4)",
+    ).ask()
+
+    # Auto compact threshold
+    auto_compact_thresh = questionary.text(
+        "Auto-compact threshold (0.0-1.0):",
+        default=str(DEFAULT_CONFIG["auto_compact_thresh"]),
+        instruction="Trigger compaction when context reaches this fraction (e.g., 0.9 = 90%)",
+    ).ask()
+
+    # Compact target words
+    compact_target_words = questionary.text(
+        "Compact target words:",
+        default=str(DEFAULT_CONFIG["compact_target_words"]),
+        instruction="Target word count for summaries",
+    ).ask()
+
+    # Preserve last N messages
+    preserve_last_n = questionary.text(
+        "Preserve last N messages:",
+        default=str(DEFAULT_CONFIG["preserve_last_n_messages"]),
+        instruction="Number of recent assistant messages to keep un-compacted",
+    ).ask()
+
+    # Tokenizer encoding
+    tokenizer_encoding = questionary.text(
+        "Tokenizer encoding:",
+        default=DEFAULT_CONFIG["tokenizer_encoding"],
+        instruction="tiktoken encoding name (e.g., cl100k_base for GPT-4)",
+    ).ask()
+
     # Create config
     config = Config(
         base_url=base_url or DEFAULT_CONFIG["base_url"],
@@ -272,6 +378,17 @@ def run_first_time_setup() -> Config:
         max_output_tokens=int(max_output_tokens)
         if max_output_tokens
         else DEFAULT_CONFIG["max_output_tokens"],
+        max_context=int(max_context) if max_context else DEFAULT_CONFIG["max_context"],
+        auto_compact_thresh=float(auto_compact_thresh)
+        if auto_compact_thresh
+        else DEFAULT_CONFIG["auto_compact_thresh"],
+        compact_target_words=int(compact_target_words)
+        if compact_target_words
+        else DEFAULT_CONFIG["compact_target_words"],
+        preserve_last_n_messages=int(preserve_last_n)
+        if preserve_last_n
+        else DEFAULT_CONFIG["preserve_last_n_messages"],
+        tokenizer_encoding=tokenizer_encoding or DEFAULT_CONFIG["tokenizer_encoding"],
     )
 
     # Save config
@@ -323,4 +440,26 @@ def get_system_prompt(
         current_date=current_date,
         max_iter=max_iter,
         effort_description=effort_description,
+    )
+
+
+def get_compaction_prompt(
+    original_query: str,
+    content: str,
+    target_words: int = 5000,
+) -> str:
+    """Get formatted compaction prompt for summarizing conversation.
+
+    Args:
+        original_query: The user's original search query
+        content: The content to summarize (web_fetch results + assistant messages)
+        target_words: Target word count for the summary
+
+    Returns:
+        Formatted compaction prompt with original_query, content, and target_words substituted
+    """
+    return COMPACTION_PROMPT_TEMPLATE.format(
+        original_query=original_query,
+        content=content,
+        target_words=target_words,
     )

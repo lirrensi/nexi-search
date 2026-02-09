@@ -46,11 +46,34 @@ Located at:
   "jina_key": "jina_...",
   "default_effort": "m",
   "max_timeout": 300,
-  "max_output_tokens": 8000
+  "max_output_tokens": 8000,
+  "max_context": 128000,
+  "auto_compact_thresh": 0.9,
+  "compact_target_words": 5000,
+  "preserve_last_n_messages": 3,
+  "tokenizer_encoding": "cl100k_base"
 }
 ```
 
 Edit with `nexi --edit-config` or just open the file.
+
+### Context Management (Auto-Compact)
+
+NEXI automatically manages conversation context to prevent token overflow during long searches:
+
+- **`max_context`**: Model's context window limit (default: 128000)
+- **`auto_compact_thresh`**: Trigger compaction at this fraction of context (default: 0.9 = 90%)
+- **`compact_target_words`**: Target word count for summaries (default: 5000)
+- **`preserve_last_n_messages`**: Number of recent assistant messages to keep un-compacted (default: 3)
+- **`tokenizer_encoding`**: tiktoken encoding name (default: cl100k_base)
+
+When approaching context limits, NEXI:
+1. Extracts metadata (search queries, URLs) from conversation
+2. Generates a dense summary of findings using the LLM
+3. Rebuilds context with preserved messages and summary
+4. Continues search without losing important information
+
+Use `--verbose` to see token counts and compaction details.
 
 ## Usage
 

@@ -8,11 +8,12 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-import httpx
 from openai import AsyncOpenAI
 
+from nexi.compaction import compact_conversation, should_compact
 from nexi.config import Config, EFFORT_LEVELS, get_system_prompt
 from nexi.tools import clear_url_cache, execute_tool
+from nexi.token_counter import count_messages_tokens, estimate_page_tokens
 
 
 @dataclass
@@ -90,6 +91,7 @@ async def run_search(
     # Track state
     urls_fetched: set[str] = set()
     total_tokens = 0
+    current_tokens = 0
     final_answer = ""
     current_iteration = 0
 
@@ -130,7 +132,7 @@ async def run_search(
                 )
 
                 if verbose:
-                    print(f"[LLM] Response received")
+                    print("[LLM] Response received")
                     if response.usage:
                         print(
                             f"[LLM] Tokens: {response.usage.total_tokens} (prompt: {response.usage.prompt_tokens}, completion: {response.usage.completion_tokens})"
@@ -146,6 +148,15 @@ async def run_search(
             # Track tokens
             if response.usage:
                 total_tokens += response.usage.total_tokens or 0
+                current_tokens = count_messages_tokens(
+                    messages, config.tokenizer_encoding
+                )
+
+                if verbose:
+                    threshold = int(config.max_context * config.auto_compact_thresh)
+                    print(
+                        f"[Tokens] Current: {current_tokens}, Max: {config.max_context}, Threshold: {threshold}"
+                    )
 
             message = response.choices[0].message
 
@@ -242,6 +253,43 @@ async def run_search(
                                 print(
                                     f"  ✓ '{page.get('url')}' fetched {content_len} chars"
                                 )
+
+                    # Estimate tokens for tool result
+                    estimated_tokens = estimate_page_tokens(
+                        json.dumps(result), config.tokenizer_encoding
+                    )
+
+                    # Check if compaction needed
+                    if should_compact(current_tokens, estimated_tokens, config):
+                        threshold = int(config.max_context * config.auto_compact_thresh)
+                        if verbose:
+                            print(
+                                f"[Compaction] Triggered: {current_tokens} + {estimated_tokens} > {threshold}"
+                            )
+
+                        messages = await compact_conversation(
+                            messages=messages,
+                            original_query=query,
+                            client=client,
+                            model=config.model,
+                            config=config,
+                            verbose=verbose,
+                        )
+
+                        current_tokens = count_messages_tokens(
+                            messages, config.tokenizer_encoding
+                        )
+
+                        # Check if still over limit
+                        if current_tokens > config.max_context:
+                            if verbose:
+                                print(
+                                    f"[Compaction] ❌ Still over limit: {current_tokens} > {config.max_context}"
+                                )
+                            final_answer = _force_answer(
+                                messages, "Context limit exceeded"
+                            )
+                            break
 
                     # Track URLs
                     urls_fetched.update(urls)

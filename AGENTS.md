@@ -262,6 +262,72 @@ def test_load_config(tmp_path):
 - **Search Tools**: `web_search` and `web_get` use Jina AI APIs
 - **Output**: Uses Rich library for terminal formatting with fallback to plain text
 
+## Context Management (Auto-Compact)
+
+NEXI includes automatic conversation compaction to prevent token overflow during long searches.
+
+### Architecture
+
+```
+Token Counter (nexi/token_counter.py)
+    ↓
+Compaction Module (nexi/compaction.py)
+    ↓
+Search Loop Integration (nexi/search.py)
+```
+
+### Key Modules
+
+**`nexi/token_counter.py`** - Pure functions for token counting:
+- `count_tokens(text, encoding)` - Count tokens in text
+- `count_messages_tokens(messages, encoding)` - Count tokens in chat messages
+- `estimate_page_tokens(content, encoding)` - Estimate tokens for page content
+- `get_encoding(encoding_name)` - Get tiktoken encoding with caching
+
+**`nexi/compaction.py`** - Core compaction logic:
+- `should_compact(current_tokens, estimated_next, config)` - Check if compaction needed
+- `extract_metadata(messages)` - Extract search queries and URLs from messages
+- `generate_summary(content, original_query, client, model, target_words)` - Generate summary (async)
+- `rebuild_context(messages, metadata, summary, preserve_last_n)` - Rebuild conversation
+- `compact_conversation(messages, original_query, client, model, config)` - Orchestrate compaction (async)
+
+### Configuration Parameters
+
+```python
+max_context: int = 128000              # Model's context window limit
+auto_compact_thresh: float = 0.9       # Trigger at 90% of context
+compact_target_words: int = 5000       # Target summary word count
+preserve_last_n_messages: int = 3      # Keep recent assistant messages
+tokenizer_encoding: str = "cl100k_base"  # tiktoken encoding name
+```
+
+### Compaction Process
+
+1. **Trigger**: When `current_tokens + estimated_next > max_context * auto_compact_thresh`
+2. **Extract Metadata**: Search queries and URLs from tool_calls
+3. **Generate Summary**: Use LLM to summarize web_fetch results and assistant messages
+4. **Rebuild Context**: Preserve system, user query, last N messages, insert summary
+5. **Continue Search**: Continue with compacted conversation
+
+### Error Handling
+
+- If summary generation fails, continue with original messages
+- If still over limit after compaction, use `_force_answer()` to finalize
+- Consistent with timeout and max_iter handling
+
+### Testing
+
+```python
+# Test token counting
+pytest tests/test_token_counter.py
+
+# Test compaction logic
+pytest tests/test_compaction.py
+
+# Test config with new fields
+pytest tests/test_config.py
+```
+
 ## Dependencies
 
 Key dependencies to understand:
@@ -270,3 +336,4 @@ Key dependencies to understand:
 - `openai` - OpenAI API client (used for compatible APIs)
 - `questionary` - Interactive prompts
 - `rich` - Terminal output formatting
+- `tiktoken` - Token counting for context management
