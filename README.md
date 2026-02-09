@@ -20,22 +20,35 @@ NEXI is an agentic search tool that uses large language models to understand you
 ### Option 1: Using uv (Recommended)
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/nexi-search.git
-cd nexi-search
+# Install directly from GitHub
+uv tool install git+https://github.com/lirrensi/nexi-search.git
 
-# Install with uv tool (fast and isolated)
+# Or clone and install
+git clone https://github.com/lirrensi/nexi-search.git
+cd nexi-search
 uv tool install .
 ```
 
-### Option 2: Using pip
+### Option 2: Using pipx
+
+```bash
+# Install directly from GitHub
+pipx install git+https://github.com/lirrensi/nexi-search.git
+
+# Or clone and install
+git clone https://github.com/lirrensi/nexi-search.git
+cd nexi-search
+pipx install .
+```
+
+### Option 3: Using pip (Development)
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/nexi-search.git
+git clone https://github.com/lirrensi/nexi-search.git
 cd nexi-search
 
-# Install dependencies
+# Install in editable mode
 pip install -e .
 ```
 
@@ -252,7 +265,7 @@ nexi-search/
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome! Please feel free to submit a Pull Request at https://github.com/lirrensi/nexi-search/pulls.
 
 ## 📝 License
 
@@ -267,7 +280,7 @@ This project is licensed under the MIT License.
 
 ## 📞 Support
 
-For issues, questions, or suggestions, please open an issue on GitHub.
+For issues, questions, or suggestions, please open an issue at https://github.com/lirrensi/nexi-search/issues.
 
 ---
 
