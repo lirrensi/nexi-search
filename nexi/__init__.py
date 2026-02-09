@@ -94,3 +94,11 @@ __all__ = [
     "print_success",
     "create_progress_callback",
 ]
+
+# MCP server (optional import)
+try:
+    from nexi.mcp_server import mcp, nexi_search, run as run_mcp_server
+
+    __all__.extend(["mcp", "nexi_search", "run_mcp_server"])
+except ImportError:
+    pass

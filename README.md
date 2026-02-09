@@ -35,8 +35,7 @@ Needs:
 ### Config File
 
 Located at:
-- Linux/macOS: `~/.local/share/nexi/config.json`
-- Windows: `%LOCALAPPDATA%\nexi\config.json`
+- `~/.local/share/nexi/config.json`
 
 ```json
 {
@@ -135,6 +134,75 @@ nexi --verbose "see all the LLM calls"
 | 429 Rate Limit | Wait or switch to different/cheaper model |
 | Timeout | Increase `max_timeout` or use `--max-timeout` |
 | UTF-8 garbled (Windows) | Use `--plain` or Windows Terminal |
+
+## MCP Server
+
+NEXI can run as an MCP (Model Context Protocol) server, providing a `nexi_search` tool to MCP-compatible applications like Claude Desktop.
+
+### Installation
+
+```bash
+# Install with MCP support
+uv sync --group mcp
+# or
+pip install -e ".[mcp]"
+```
+
+### Running the Server
+
+**STDIO transport (for local MCP clients):**
+```bash
+python -m nexi.mcp_server_cli
+# or
+uv run python -m nexi.mcp_server_cli
+```
+
+**HTTP transport (for network access):**
+```bash
+python -m nexi.mcp_server_cli http 0.0.0.0 8000
+# or
+uv run python -m nexi.mcp_server_cli http 0.0.0.0 8000
+```
+
+### MCP Tool: `nexi_search`
+
+**Parameters:**
+- `query` (required): The search query
+- `effort` (optional): "s" (quick), "m" (medium, default), "l" (deep)
+- `max_iter` (optional): Override max iterations
+- `max_timeout` (optional): Force return after N seconds
+- `verbose` (optional): Show detailed progress
+
+**Returns:** Comprehensive answer with sources in markdown format, including metadata (iterations, duration, tokens, URLs).
+
+### Claude Desktop Configuration
+
+Add to your Claude Desktop MCP config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS, or equivalent on other platforms):
+
+```json
+{
+  "mcpServers": {
+    "nexi": {
+      "command": "uv",
+      "args": ["run", "python", "-m", "nexi.mcp_server_cli"],
+      "env": {}
+    }
+  }
+}
+```
+
+For HTTP transport:
+```json
+{
+  "mcpServers": {
+    "nexi": {
+      "url": "http://localhost:8000"
+    }
+  }
+}
+```
+
+See [MCP_SERVER.md](MCP_SERVER.md) for more details.
 
 ## License
 
