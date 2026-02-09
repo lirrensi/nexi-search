@@ -280,8 +280,18 @@ def _interactive_mode() -> None:
         print_error(f"Failed to load config: {e}")
         sys.exit(1)
 
+    # Display ASCII art
+    art_path = Path(__file__).parent.parent / "img" / "art.txt"
+    if art_path.exists():
+        try:
+            with open(art_path, "r", encoding="utf-8") as f:
+                art = f.read()
+            click.echo(art)
+        except Exception:
+            pass
+
     print_success("Welcome to NEXI interactive mode!")
-    print("Type 'exit' or press Ctrl+C to quit\n")
+    print("Type 'exit' or press Ctrl+C to quit\\n")
 
     while True:
         try:

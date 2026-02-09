@@ -2,6 +2,8 @@
 
 **Intelligent web search CLI tool powered by LLMs and Jina AI**
 
+![NEXI](https://raw.githubusercontent.com/lirrensi/nexi-search/main/img/nexi.jpg)
+
 NEXI is an agentic search tool that uses large language models to understand your query, perform web searches using Jina AI, and synthesize comprehensive answers from multiple sources.
 
 ## ✨ Features
