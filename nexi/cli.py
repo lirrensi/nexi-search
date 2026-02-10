@@ -54,7 +54,9 @@ from nexi.search import run_search_sync
 )
 @click.option("--max-len", type=int, help="Max output tokens")
 @click.option("--max-iter", type=int, help="Max search iterations")
-@click.option("--max-timeout", type=int, help="Force return after N seconds")
+@click.option(
+    "--time-target", type=int, help="Soft limit: force final answer after N seconds (default 10min)"
+)
 @click.option("-v", "--verbose", is_flag=True, help="Show tool calls and debug info")
 @click.option("--plain", is_flag=True, help="Disable emoji/colors for scripting")
 @click.option("--last", type=int, metavar="N", help="Show last N searches")
@@ -142,7 +144,7 @@ def main(
         effort=effort,
         max_len=max_len,
         max_iter=max_iter,
-        max_timeout=max_timeout,
+        time_target=time_target,
         verbose=verbose,
         plain=plain,
     )
@@ -166,7 +168,7 @@ def _run_search_command(
 
     # Override config with CLI options
     search_effort = effort or config.default_effort
-    search_timeout = max_timeout if max_timeout is not None else config.max_timeout
+    search_time_target = time_target if time_target is not None else config.time_target
     search_max_tokens = max_len if max_len is not None else config.max_output_tokens
 
     # Create temporary config with overrides
@@ -176,7 +178,7 @@ def _run_search_command(
         model=config.model,
         jina_key=config.jina_key,
         default_effort=search_effort,
-        max_timeout=search_timeout,
+        time_target=search_time_target,
         max_output_tokens=search_max_tokens,
         jina_timeout=config.jina_timeout,
         llm_max_retries=config.llm_max_retries,
@@ -195,7 +197,7 @@ def _run_search_command(
             config=search_config,
             effort=search_effort,
             max_iter=max_iter,
-            max_timeout=search_timeout,
+            time_target=search_time_target,
             verbose=verbose,
             progress_callback=progress_callback,
         )
@@ -311,7 +313,7 @@ def _interactive_mode() -> None:
                 effort=None,
                 max_len=None,
                 max_iter=None,
-                max_timeout=None,
+                time_target=None,
                 verbose=False,
                 plain=False,
             )

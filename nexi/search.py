@@ -37,7 +37,7 @@ async def run_search(
     config: Config,
     effort: str = "m",
     max_iter: int | None = None,
-    max_timeout: int | None = None,
+    time_target: int | None = None,
     verbose: bool = False,
     progress_callback: ProgressCallback | None = None,
 ) -> SearchResult:
@@ -48,7 +48,7 @@ async def run_search(
         config: NEXI configuration
         effort: Effort level (s/m/l)
         max_iter: Override max iterations
-        max_timeout: Override timeout
+        time_target: Override time target
         verbose: Show detailed progress
         progress_callback: Called with (message, iteration, total)
 
@@ -72,7 +72,7 @@ async def run_search(
         max_iter = EFFORT_LEVELS["m"]["max_iter"]
 
     # Determine timeout
-    timeout = max_timeout if max_timeout is not None else config.max_timeout
+    time_target_total = time_target if time_target is not None else config.time_target
 
     # Load system prompt
     system_prompt = get_system_prompt(max_iter, effort)
@@ -107,9 +107,9 @@ async def run_search(
         for current_iteration in range(1, max_iter + 1):
             # Check timeout
             elapsed = time.time() - start_time
-            if elapsed >= timeout:
-                report_progress(f"Timeout reached after {elapsed:.1f}s", current_iteration)
-                final_answer = _force_answer(messages, "Search timeout reached")
+            if elapsed >= time_target_total:
+                report_progress(f"Time target reached after {elapsed:.1f}s", current_iteration)
+                final_answer = _force_answer(messages, "Time target reached")
                 break
 
             report_progress(f"Iteration {current_iteration}/{max_iter}", current_iteration)
@@ -399,7 +399,7 @@ def run_search_sync(
     config: Config,
     effort: str = "m",
     max_iter: int | None = None,
-    max_timeout: int | None = None,
+    time_target: int | None = None,
     verbose: bool = False,
     progress_callback: ProgressCallback | None = None,
 ) -> SearchResult:
@@ -410,7 +410,7 @@ def run_search_sync(
         config: NEXI configuration
         effort: Effort level (s/m/l)
         max_iter: Override max iterations
-        max_timeout: Override timeout
+        time_target: Override time target
         verbose: Show detailed progress
         progress_callback: Called with (message, iteration, total)
 
@@ -427,7 +427,7 @@ def run_search_sync(
                 config=config,
                 effort=effort,
                 max_iter=max_iter,
-                max_timeout=max_timeout,
+                time_target=time_target,
                 verbose=verbose,
                 progress_callback=progress_callback,
             )

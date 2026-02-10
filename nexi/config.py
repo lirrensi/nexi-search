@@ -25,7 +25,7 @@ DEFAULT_CONFIG = {
     "base_url": "https://openrouter.ai/api/v1",
     "model": "google/gemini-2.5-flash-lite",
     "default_effort": "m",
-    "max_timeout": 240,
+    "time_target": 600,
     "max_output_tokens": 8192,
     "max_context": 128000,
     "auto_compact_thresh": 0.9,
@@ -116,7 +116,7 @@ class Config:
     model: str
     jina_key: str
     default_effort: str
-    max_timeout: int
+    time_target: int
     max_output_tokens: int
     max_context: int = 128000
     auto_compact_thresh: float = 0.9
@@ -155,7 +155,7 @@ def validate_config(config: dict[str, Any]) -> tuple[bool, list[str]]:
         "api_key",
         "model",
         "default_effort",
-        "max_timeout",
+        "time_target",
         "max_output_tokens",
     ]
     for field in required:
@@ -190,10 +190,10 @@ def validate_config(config: dict[str, Any]) -> tuple[bool, list[str]]:
     if effort not in EFFORT_LEVELS:
         errors.append(f"default_effort must be one of: {', '.join(EFFORT_LEVELS.keys())}")
 
-    # Validate max_timeout
-    timeout = config.get("max_timeout", 0)
-    if not isinstance(timeout, int) or timeout <= 0:
-        errors.append("max_timeout must be a positive integer")
+    # Validate time_target
+    time_target = config.get("time_target", 0)
+    if not isinstance(time_target, int) or time_target <= 0:
+        errors.append("time_target must be a positive integer")
 
     # Validate max_output_tokens
     tokens = config.get("max_output_tokens", 0)
@@ -326,9 +326,9 @@ def run_first_time_setup() -> Config:
     ).ask()
 
     # Max timeout
-    max_timeout = questionary.text(
-        "Max timeout (seconds):",
-        default=str(DEFAULT_CONFIG["max_timeout"]),
+    time_target = questionary.text(
+        "Time target (seconds):",
+        default=str(DEFAULT_CONFIG["time_target"]),
     ).ask()
 
     # Max output tokens
@@ -398,7 +398,7 @@ def run_first_time_setup() -> Config:
         model=model or DEFAULT_CONFIG["model"],
         jina_key=jina_key or "",
         default_effort=default_effort or "m",
-        max_timeout=int(max_timeout) if max_timeout else DEFAULT_CONFIG["max_timeout"],
+        time_target=int(time_target) if time_target else DEFAULT_CONFIG["time_target"],
         max_output_tokens=int(max_output_tokens)
         if max_output_tokens
         else DEFAULT_CONFIG["max_output_tokens"],
