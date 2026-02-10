@@ -72,7 +72,7 @@ def main(
     effort: str | None,
     max_len: int | None,
     max_iter: int | None,
-    max_timeout: int | None,
+    time_target: int | None,
     verbose: bool,
     plain: bool,
     last: int | None,
@@ -155,7 +155,7 @@ def _run_search_command(
     effort: str | None,
     max_len: int | None,
     max_iter: int | None,
-    max_timeout: int | None,
+    time_target: int | None,
     verbose: bool,
     plain: bool,
 ) -> None:
