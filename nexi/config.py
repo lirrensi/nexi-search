@@ -32,6 +32,8 @@ DEFAULT_CONFIG = {
     "compact_target_words": 5000,
     "preserve_last_n_messages": 3,
     "tokenizer_encoding": "cl100k_base",
+    "jina_timeout": 30,
+    "llm_max_retries": 3,
 }
 
 EXTRACTOR_PROMPT_TEMPLATE = """You are a precise information extractor.
@@ -121,6 +123,8 @@ class Config:
     compact_target_words: int = 5000
     preserve_last_n_messages: int = 3
     tokenizer_encoding: str = "cl100k_base"
+    jina_timeout: int = 30
+    llm_max_retries: int = 3
 
     def to_dict(self) -> dict[str, Any]:
         """Convert config to dictionary."""
@@ -163,9 +167,7 @@ def validate_config(config: dict[str, Any]) -> tuple[bool, list[str]]:
 
     # Validate base_url
     base_url = config.get("base_url", "")
-    if not isinstance(base_url, str) or not base_url.startswith(
-        ("http://", "https://")
-    ):
+    if not isinstance(base_url, str) or not base_url.startswith(("http://", "https://")):
         errors.append("base_url must be a valid HTTP(S) URL")
 
     # Validate api_key
@@ -186,9 +188,7 @@ def validate_config(config: dict[str, Any]) -> tuple[bool, list[str]]:
     # Validate default_effort
     effort = config.get("default_effort", "")
     if effort not in EFFORT_LEVELS:
-        errors.append(
-            f"default_effort must be one of: {', '.join(EFFORT_LEVELS.keys())}"
-        )
+        errors.append(f"default_effort must be one of: {', '.join(EFFORT_LEVELS.keys())}")
 
     # Validate max_timeout
     timeout = config.get("max_timeout", 0)
@@ -232,6 +232,18 @@ def validate_config(config: dict[str, Any]) -> tuple[bool, list[str]]:
         if not isinstance(tokenizer_encoding, str) or not tokenizer_encoding.strip():
             errors.append("tokenizer_encoding must be a non-empty string")
 
+    # Validate jina_timeout (optional)
+    jina_timeout = config.get("jina_timeout")
+    if jina_timeout is not None:
+        if not isinstance(jina_timeout, int) or jina_timeout <= 0:
+            errors.append("jina_timeout must be a positive integer")
+
+    # Validate llm_max_retries (optional)
+    llm_max_retries = config.get("llm_max_retries")
+    if llm_max_retries is not None:
+        if not isinstance(llm_max_retries, int) or llm_max_retries <= 0:
+            errors.append("llm_max_retries must be a positive integer")
+
     return len(errors) == 0, errors
 
 
@@ -245,7 +257,7 @@ def load_config() -> Config:
     if not CONFIG_FILE.exists():
         raise FileNotFoundError(f"Config file not found: {CONFIG_FILE}")
 
-    with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+    with open(CONFIG_FILE, encoding="utf-8") as f:
         data = json.load(f)
 
     is_valid, errors = validate_config(data)
@@ -327,9 +339,7 @@ def run_first_time_setup() -> Config:
 
     # Context management settings (optional)
     print("\n--- Context Management (Optional) ---")
-    print(
-        "These settings control automatic conversation compaction to prevent context overflow."
-    )
+    print("These settings control automatic conversation compaction to prevent context overflow.")
     print("Press Enter to use defaults for all context settings.\n")
 
     # Max context
@@ -367,6 +377,20 @@ def run_first_time_setup() -> Config:
         instruction="tiktoken encoding name (e.g., cl100k_base for GPT-4)",
     ).ask()
 
+    # Jina timeout
+    jina_timeout = questionary.text(
+        "Jina API timeout (seconds):",
+        default=str(DEFAULT_CONFIG["jina_timeout"]),
+        instruction="Timeout for Jina AI API calls",
+    ).ask()
+
+    # LLM max retries
+    llm_max_retries = questionary.text(
+        "LLM max retries:",
+        default=str(DEFAULT_CONFIG["llm_max_retries"]),
+        instruction="Maximum retry attempts for LLM API calls",
+    ).ask()
+
     # Create config
     config = Config(
         base_url=base_url or DEFAULT_CONFIG["base_url"],
@@ -389,6 +413,10 @@ def run_first_time_setup() -> Config:
         if preserve_last_n
         else DEFAULT_CONFIG["preserve_last_n_messages"],
         tokenizer_encoding=tokenizer_encoding or DEFAULT_CONFIG["tokenizer_encoding"],
+        jina_timeout=int(jina_timeout) if jina_timeout else DEFAULT_CONFIG["jina_timeout"],
+        llm_max_retries=int(llm_max_retries)
+        if llm_max_retries
+        else DEFAULT_CONFIG["llm_max_retries"],
     )
 
     # Save config
@@ -413,9 +441,7 @@ def ensure_config() -> Config:
         return run_first_time_setup()
 
 
-def get_system_prompt(
-    max_iter: int, effort: str = "m", prompt_template: str | None = None
-) -> str:
+def get_system_prompt(max_iter: int, effort: str = "m", prompt_template: str | None = None) -> str:
     """Get formatted system prompt.
 
     Args:

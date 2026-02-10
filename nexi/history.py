@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -68,7 +68,7 @@ def get_last_n_entries(n: int) -> list[HistoryEntry]:
         return []
 
     entries = []
-    with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+    with open(HISTORY_FILE, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if line:
@@ -95,7 +95,7 @@ def get_entry_by_id(entry_id: str) -> HistoryEntry | None:
     if not HISTORY_FILE.exists():
         return None
 
-    with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+    with open(HISTORY_FILE, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if line:
@@ -150,7 +150,7 @@ def create_entry(
     """
     return HistoryEntry(
         id=generate_id(),
-        ts=datetime.now(timezone.utc).isoformat(),
+        ts=datetime.now(UTC).isoformat(),
         query=query,
         answer=answer,
         urls=urls,
@@ -172,7 +172,7 @@ def format_time_ago(ts: str) -> str:
     """
     try:
         dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         diff = now - dt
 
         seconds = int(diff.total_seconds())

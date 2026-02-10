@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 
 from nexi.token_counter import (
-    count_tokens,
     count_messages_tokens,
+    count_tokens,
     estimate_page_tokens,
     get_encoding,
 )

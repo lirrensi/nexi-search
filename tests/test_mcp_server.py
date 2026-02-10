@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import Mock, patch
+
+import pytest
 
 
 def test_mcp_server_module_exists():
@@ -23,8 +24,9 @@ def test_mcp_server_module_exists():
 )
 def test_nexi_search_tool_signature():
     """Test that nexi_search tool has correct signature."""
-    from nexi.mcp_server import nexi_search
     import inspect
+
+    from nexi.mcp_server import nexi_search
 
     sig = inspect.signature(nexi_search)
     params = list(sig.parameters.keys())

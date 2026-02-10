@@ -12,20 +12,19 @@ from nexi.config import (
     Config,
     ensure_config,
     get_config_path,
-    load_config,
-    run_first_time_setup,
-    EFFORT_LEVELS,
 )
+from nexi.errors import handle_error
 from nexi.history import (
     add_history_entry,
-    clear_history,
     create_entry,
     format_entry_full,
     format_entry_preview,
     get_entry_by_id,
-    get_history_path,
     get_last_n_entries,
     get_latest_entry,
+)
+from nexi.history import (
+    clear_history as clear_history_func,
 )
 from nexi.output import (
     create_progress_callback,
@@ -41,7 +40,10 @@ from nexi.output import (
 from nexi.search import run_search_sync
 
 
-@click.command(context_settings=dict(help_option_names=["-h", "--help"]))
+@click.command(
+    context_settings={"help_option_names": ["-h", "--help"]},
+    epilog="For shell completion: nexi --install-completion",
+)
 @click.argument("query", required=False)
 @click.option("-q", "--query-text", help="Explicit query string")
 @click.option(
@@ -98,16 +100,14 @@ def main(
 
     if edit_config:
         config_path = get_config_path()
-        editor = os.environ.get(
-            "EDITOR", "notepad" if sys.platform == "win32" else "nano"
-        )
+        editor = os.environ.get("EDITOR", "notepad" if sys.platform == "win32" else "nano")
         click.echo(f"Opening {config_path} in {editor}...")
         os.system(f'{editor} "{config_path}"')
         return
 
     # Handle history commands
     if clear_history:
-        clear_history()
+        clear_history_func()
         print_success("History cleared")
         return
 
@@ -162,8 +162,7 @@ def _run_search_command(
     try:
         config = ensure_config()
     except Exception as e:
-        print_error(f"Failed to load config: {e}")
-        sys.exit(1)
+        handle_error(f"Failed to load config: {e}", verbose=verbose)
 
     # Override config with CLI options
     search_effort = effort or config.default_effort
@@ -179,6 +178,8 @@ def _run_search_command(
         default_effort=search_effort,
         max_timeout=search_timeout,
         max_output_tokens=search_max_tokens,
+        jina_timeout=config.jina_timeout,
+        llm_max_retries=config.llm_max_retries,
     )
 
     # Print search start
@@ -228,8 +229,7 @@ def _run_search_command(
         print_warning("\nSearch cancelled")
         sys.exit(130)
     except Exception as e:
-        print_error(f"Search failed: {e}")
-        sys.exit(1)
+        handle_error(f"Search failed: {e}", verbose=verbose)
 
 
 def _show_last_n(n: int, plain: bool) -> None:
@@ -284,14 +284,14 @@ def _interactive_mode() -> None:
     art_path = Path(__file__).parent.parent / "img" / "art.txt"
     if art_path.exists():
         try:
-            with open(art_path, "r", encoding="utf-8") as f:
+            with open(art_path, encoding="utf-8") as f:
                 art = f.read()
             click.echo(art)
         except Exception:
             pass
 
     print_success("Welcome to NEXI interactive mode!")
-    print("Type 'exit' or press Ctrl+C to quit\\n")
+    print("Type 'exit' or press Ctrl+C to quit\n")
 
     while True:
         try:

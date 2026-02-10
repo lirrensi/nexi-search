@@ -1,7 +1,7 @@
 [project]
 name = "nexi-search"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.2.0"
+description = "Self-hosted perplexity in your terminal - LLM-powered web search"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -20,10 +20,38 @@ mcp = [
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.9.0",
 ]
 mcp = [
     "fastmcp>=0.1.0",
 ]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # Pyflakes
+    "I",   # isort
+    "N",   # pep8-naming
+    "W",   # pycodestyle warnings
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "SIM", # flake8-simplify
+]
+ignore = [
+    "E501",  # Line too long (handled by formatter)
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
 
 [build-system]
 requires = ["setuptools>=61.0"]

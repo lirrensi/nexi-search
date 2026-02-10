@@ -5,15 +5,16 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from openai import AsyncOpenAI
 
 from nexi.compaction import compact_conversation, should_compact
-from nexi.config import Config, EFFORT_LEVELS, get_system_prompt
-from nexi.tools import clear_url_cache, execute_tool
+from nexi.config import EFFORT_LEVELS, Config, get_system_prompt
 from nexi.token_counter import count_messages_tokens, estimate_page_tokens
+from nexi.tools import TOOLS, clear_url_cache, execute_tool
 
 
 @dataclass
@@ -107,50 +108,69 @@ async def run_search(
             # Check timeout
             elapsed = time.time() - start_time
             if elapsed >= timeout:
-                report_progress(
-                    f"Timeout reached after {elapsed:.1f}s", current_iteration
-                )
+                report_progress(f"Timeout reached after {elapsed:.1f}s", current_iteration)
                 final_answer = _force_answer(messages, "Search timeout reached")
                 break
 
-            report_progress(
-                f"Iteration {current_iteration}/{max_iter}", current_iteration
-            )
+            report_progress(f"Iteration {current_iteration}/{max_iter}", current_iteration)
 
-            # Call LLM with tools
-            try:
-                if verbose:
-                    print(f"[LLM] Calling {config.model}...")
-                    print(f"[LLM] Messages count: {len(messages)}")
-
-                response = await client.chat.completions.create(
-                    model=config.model,
-                    messages=messages,
-                    tools=_get_tool_schemas(),
-                    tool_choice="auto",
-                    max_tokens=config.max_output_tokens,
-                )
-
-                if verbose:
-                    print("[LLM] Response received")
-                    if response.usage:
+            # Call LLM with tools (with retry logic)
+            response = None
+            last_error = None
+            for attempt in range(config.llm_max_retries):
+                try:
+                    if verbose:
                         print(
-                            f"[LLM] Tokens: {response.usage.total_tokens} (prompt: {response.usage.prompt_tokens}, completion: {response.usage.completion_tokens})"
+                            f"[LLM] Calling {config.model}... (attempt {attempt + 1}/{config.llm_max_retries})"
                         )
-            except Exception as e:
-                error_msg = f"LLM API error: {e}"
-                report_progress(error_msg, current_iteration)
-                if verbose:
-                    print(f"[LLM] ❌ ERROR: {error_msg}")
-                final_answer = _force_answer(messages, f"API error: {e}")
+                        print(f"[LLM] Messages count: {len(messages)}")
+
+                    response = await client.chat.completions.create(
+                        model=config.model,
+                        messages=messages,
+                        tools=_get_tool_schemas(),
+                        tool_choice="auto",
+                        max_tokens=config.max_output_tokens,
+                    )
+
+                    if verbose:
+                        print("[LLM] Response received")
+                        if response.usage:
+                            print(
+                                f"[LLM] Tokens: {response.usage.total_tokens} (prompt: {response.usage.prompt_tokens}, completion: {response.usage.completion_tokens})"
+                            )
+                    break  # Success, exit retry loop
+                except Exception as e:
+                    last_error = e
+                    error_msg = (
+                        f"LLM API error (attempt {attempt + 1}/{config.llm_max_retries}): {e}"
+                    )
+                    report_progress(error_msg, current_iteration)
+                    if verbose:
+                        print(f"[LLM] ❌ ERROR: {error_msg}")
+
+                    if attempt < config.llm_max_retries - 1:
+                        # Exponential backoff: 1s, 2s, 4s
+                        backoff_delay = 2**attempt
+                        if verbose:
+                            print(f"[LLM] Retrying in {backoff_delay}s...")
+                        await asyncio.sleep(backoff_delay)
+                    else:
+                        # All retries exhausted
+                        final_answer = _force_answer(
+                            messages,
+                            f"API error after {config.llm_max_retries} retries: {last_error}",
+                        )
+                        break
+
+            if response is None:
+                # All retries failed, exit the search loop
                 break
 
             # Track tokens
             if response.usage:
                 total_tokens += response.usage.total_tokens or 0
-                current_tokens = count_messages_tokens(
-                    messages, config.tokenizer_encoding
-                )
+                current_tokens = count_messages_tokens(messages, config.tokenizer_encoding)
 
                 if verbose:
                     threshold = int(config.max_context * config.auto_compact_thresh)
@@ -167,9 +187,7 @@ async def run_search(
                 tool_args = json.loads(tool_call.function.arguments)
 
                 if verbose:
-                    report_progress(
-                        f"Tool: {tool_name} | Args: {tool_args}", current_iteration
-                    )
+                    report_progress(f"Tool: {tool_name} | Args: {tool_args}", current_iteration)
 
                 # Execute tool
                 if tool_name == "final_answer":
@@ -184,8 +202,9 @@ async def run_search(
                         current_iteration,
                     )
                     result = await execute_tool(
-                        tool_name, tool_args, config.jina_key, verbose
+                        tool_name, tool_args, config.jina_key, verbose, timeout=config.jina_timeout
                     )
+                    result = await execute_tool(tool_name, tool_args, config.jina_key, verbose)
 
                     if verbose:
                         print(
@@ -193,9 +212,7 @@ async def run_search(
                         )
                         for search in result.get("searches", []):
                             if "error" in search:
-                                print(
-                                    f"  ❌ Error for '{search.get('query')}': {search['error']}"
-                                )
+                                print(f"  ❌ Error for '{search.get('query')}': {search['error']}")
                             else:
                                 print(
                                     f"  ✓ '{search.get('query')}' returned {len(search.get('results', []))} results"
@@ -245,14 +262,10 @@ async def run_search(
                         )
                         for page in result.get("pages", []):
                             if "error" in page:
-                                print(
-                                    f"  ❌ Error for '{page.get('url')}': {page['error']}"
-                                )
+                                print(f"  ❌ Error for '{page.get('url')}': {page['error']}")
                             else:
                                 content_len = len(page.get("content", ""))
-                                print(
-                                    f"  ✓ '{page.get('url')}' fetched {content_len} chars"
-                                )
+                                print(f"  ✓ '{page.get('url')}' fetched {content_len} chars")
 
                     # Estimate tokens for tool result
                     estimated_tokens = estimate_page_tokens(
@@ -276,9 +289,7 @@ async def run_search(
                             verbose=verbose,
                         )
 
-                        current_tokens = count_messages_tokens(
-                            messages, config.tokenizer_encoding
-                        )
+                        current_tokens = count_messages_tokens(messages, config.tokenizer_encoding)
 
                         # Check if still over limit
                         if current_tokens > config.max_context:
@@ -286,9 +297,7 @@ async def run_search(
                                 print(
                                     f"[Compaction] ❌ Still over limit: {current_tokens} > {config.max_context}"
                                 )
-                            final_answer = _force_answer(
-                                messages, "Context limit exceeded"
-                            )
+                            final_answer = _force_answer(messages, "Context limit exceeded")
                             break
 
                     # Track URLs
@@ -329,9 +338,7 @@ async def run_search(
         else:
             # Max iterations reached
             report_progress(f"Max iterations ({max_iter}) reached", max_iter)
-            final_answer = _force_answer(
-                messages, f"Reached maximum iterations ({max_iter})"
-            )
+            final_answer = _force_answer(messages, f"Reached maximum iterations ({max_iter})")
 
     except asyncio.CancelledError:
         report_progress("Search cancelled", 0)
@@ -351,75 +358,11 @@ async def run_search(
 
 
 def _get_tool_schemas() -> list[dict[str, Any]]:
-    """Get tool schemas for OpenAI function calling."""
-    return [
-        {
-            "type": "function",
-            "function": {
-                "name": "web_search",
-                "description": "Search the web using Jina AI. Supports multiple parallel queries for efficient research. Returns snippets and URLs.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "queries": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "List of search queries to execute in parallel",
-                            "minItems": 1,
-                            "maxItems": 5,
-                        }
-                    },
-                    "required": ["queries"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "web_get",
-                "description": "Fetch and process content from URLs using Jina Reader. Automatically converts PDFs, HTML to clean markdown. Supports multiple URLs in parallel. When get_full is false (default), content is processed via LLM summarizer using the provided instructions to extract/summarize specific information. When get_full is true, returns the raw page content without any filtering.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "urls": {
-                            "type": "array",
-                            "items": {"type": "string", "format": "uri"},
-                            "description": "List of URLs to fetch content from",
-                            "minItems": 1,
-                            "maxItems": 8,
-                        },
-                        "instructions": {
-                            "type": "string",
-                            "description": "Custom prompt guiding the LLM summarizer on what to look for. Make instructions explicit, self-contained, and dense—general for broad overviews or specific for targeted details. This helps chain crawls: If the summary lists next URLs, you can browse those next. Always keep requests focused to avoid vague outputs. Only used when get_full is false.",
-                        },
-                        "get_full": {
-                            "type": "boolean",
-                            "description": "If true, returns the full page content without LLM processing. If false (default), content is summarized/extracted based on instructions.",
-                            "default": False,
-                        },
-                    },
-                    "required": ["urls"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "final_answer",
-                "description": "Provide the final answer to the user's query. This terminates the search loop.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "answer": {
-                            "type": "string",
-                            "description": "The complete answer to the user's query, formatted in markdown",
-                        }
-                    },
-                    "required": ["answer"],
-                },
-            },
-        },
-    ]
+    """Get tool schemas for OpenAI function calling.
+
+    Returns the TOOLS constant from tools.py to avoid duplication.
+    """
+    return TOOLS
 
 
 def _force_answer(messages: list[dict[str, Any]], reason: str) -> str:

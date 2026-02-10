@@ -122,9 +122,9 @@ nexi --verbose "see all the LLM calls"
 
 | Level | Description | When to use |
 |-------|-------------|-------------|
-| `s` | Single search, quick answer | Simple facts, definitions |
-| `m` | Balanced, multi-source | Most queries |
-| `l` | Deep research, many iterations | Complex topics |
+| `s` | Quick search (8 iterations) | Simple facts, definitions |
+| `m` | Balanced (16 iterations) | Most queries |
+| `l` | Deep research (32 iterations) | Complex topics |
 
 ## Troubleshooting
 

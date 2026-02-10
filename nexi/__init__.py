@@ -3,51 +3,51 @@
 __version__ = "0.1.0"
 
 from nexi.config import (
+    DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+    EFFORT_LEVELS,
+    EXTRACTOR_PROMPT_TEMPLATE,
     Config,
     ensure_config,
     get_config_path,
-    load_config,
-    save_config,
-    run_first_time_setup,
     get_system_prompt,
-    DEFAULT_SYSTEM_PROMPT_TEMPLATE,
-    EXTRACTOR_PROMPT_TEMPLATE,
-    EFFORT_LEVELS,
+    load_config,
+    run_first_time_setup,
+    save_config,
 )
+from nexi.history import (
+    HistoryEntry,
+    add_history_entry,
+    clear_history,
+    create_entry,
+    format_entry_full,
+    format_entry_preview,
+    get_entry_by_id,
+    get_history_path,
+    get_last_n_entries,
+    get_latest_entry,
+)
+from nexi.output import (
+    create_progress_callback,
+    get_console,
+    is_tty,
+    print_answer,
+    print_error,
+    print_markdown,
+    print_message,
+    print_progress,
+    print_result_summary,
+    print_search_start,
+    print_success,
+    print_warning,
+    set_plain_mode,
+)
+from nexi.search import SearchResult, run_search, run_search_sync
 from nexi.tools import (
     TOOLS,
     clear_url_cache,
     execute_tool,
-    web_search,
     web_get,
-)
-from nexi.history import (
-    HistoryEntry,
-    get_history_path,
-    add_history_entry,
-    get_last_n_entries,
-    get_entry_by_id,
-    get_latest_entry,
-    clear_history,
-    create_entry,
-    format_entry_preview,
-    format_entry_full,
-)
-from nexi.search import SearchResult, run_search, run_search_sync
-from nexi.output import (
-    get_console,
-    set_plain_mode,
-    is_tty,
-    print_message,
-    print_markdown,
-    print_search_start,
-    print_progress,
-    print_answer,
-    print_result_summary,
-    print_error,
-    print_warning,
-    print_success,
-    create_progress_callback,
+    web_search,
 )
 
 __all__ = [
@@ -97,7 +97,8 @@ __all__ = [
 
 # MCP server (optional import)
 try:
-    from nexi.mcp_server import mcp, nexi_search, run as run_mcp_server
+    from nexi.mcp_server import mcp, nexi_search
+    from nexi.mcp_server import run as run_mcp_server
 
     __all__.extend(["mcp", "nexi_search", "run_mcp_server"])
 except ImportError:

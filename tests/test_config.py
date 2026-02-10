@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from nexi.config import (
-    Config,
     DEFAULT_CONFIG,
+    Config,
     get_compaction_prompt,
     validate_config,
 )

@@ -13,11 +13,38 @@ from nexi.config import EXTRACTOR_PROMPT_TEMPLATE
 # In-memory cache for fetched URLs: {url: raw_content}
 _url_cache: dict[str, str] = {}
 
+# Shared HTTP client for connection pooling
+_http_client: httpx.AsyncClient | None = None
+
 
 def clear_url_cache() -> None:
     """Clear the URL cache (call at start of each search session)."""
     global _url_cache
     _url_cache.clear()
+
+
+def get_http_client(timeout: float = 30.0) -> httpx.AsyncClient:
+    """Get or create shared HTTP client with connection pooling.
+
+    Args:
+        timeout: Request timeout in seconds
+
+    Returns:
+        Shared httpx.AsyncClient instance
+    """
+    global _http_client
+    if _http_client is None:
+        limits = httpx.Limits(max_connections=10, max_keepalive_connections=5)
+        _http_client = httpx.AsyncClient(timeout=timeout, limits=limits)
+    return _http_client
+
+
+async def close_http_client() -> None:
+    """Close the shared HTTP client."""
+    global _http_client
+    if _http_client is not None:
+        await _http_client.aclose()
+        _http_client = None
 
 
 __all__ = [
@@ -100,7 +127,7 @@ TOOLS = [
 
 
 async def web_search(
-    queries: list[str], jina_key: str, verbose: bool = False
+    queries: list[str], jina_key: str, verbose: bool = False, timeout: int = 30
 ) -> dict[str, Any]:
     """Search the web using Jina AI.
 
@@ -108,6 +135,7 @@ async def web_search(
         queries: List of search queries (1-5)
         jina_key: Jina AI API key
         verbose: Show detailed logs
+        timeout: Timeout in seconds for API calls (default: 30)
 
     Returns:
         Dictionary with search results
@@ -117,30 +145,31 @@ async def web_search(
     if verbose:
         print(f"[Jina Search] Starting {len(queries)} parallel searches...")
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        # Create tasks for parallel execution
-        tasks = []
-        for query in queries:
-            task = _search_single(client, query, jina_key, verbose)
-            tasks.append(task)
+    client = get_http_client(timeout=float(timeout))
 
-        # Execute all searches in parallel
-        search_results = await asyncio.gather(*tasks, return_exceptions=True)
+    # Create tasks for parallel execution
+    tasks = []
+    for query in queries:
+        task = _search_single(client, query, jina_key, verbose)
+        tasks.append(task)
 
-        for query, result in zip(queries, search_results):
-            if isinstance(result, Exception):
-                error_msg = str(result)
-                if verbose:
-                    print(f"  [Jina Search] ❌ Exception: {error_msg}")
-                results.append(
-                    {
-                        "query": query,
-                        "error": error_msg,
-                        "results": [],
-                    }
-                )
-            else:
-                results.append(result)
+    # Execute all searches in parallel
+    search_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    for query, result in zip(queries, search_results):
+        if isinstance(result, Exception):
+            error_msg = str(result)
+            if verbose:
+                print(f"  [Jina Search] ❌ Exception: {error_msg}")
+            results.append(
+                {
+                    "query": query,
+                    "error": error_msg,
+                    "results": [],
+                }
+            )
+        else:
+            results.append(result)
 
     if verbose:
         print(f"[Jina Search] Completed {len(results)} searches")
@@ -180,7 +209,7 @@ async def _search_single(
         try:
             data = response.json()
             if verbose:
-                print(f"  [Jina Search] Parsed as JSON")
+                print("  [Jina Search] Parsed as JSON")
             return {
                 "query": query,
                 "results": data if isinstance(data, list) else [data],
@@ -188,7 +217,7 @@ async def _search_single(
         except Exception:
             # If JSON parsing fails, parse the text format
             if verbose:
-                print(f"  [Jina Search] Parsing as text format")
+                print("  [Jina Search] Parsing as text format")
 
             # Parse text format: [1] Title: ... [1] URL Source: ... [1] Description: ...
             results = []
@@ -271,6 +300,7 @@ async def web_get(
     llm_client: AsyncOpenAI | None = None,
     llm_model: str | None = None,
     query: str = "",
+    timeout: int = 30,
 ) -> dict[str, Any]:
     """Fetch and extract content from URLs using Jina Reader + LLM summarizer.
 
@@ -283,6 +313,7 @@ async def web_get(
         llm_client: OpenAI client for LLM extraction (required when get_full=False)
         llm_model: Model name for LLM extraction (required when get_full=False)
         query: Original search query for extraction context
+        timeout: Timeout in seconds for API calls (default: 30)
 
     Returns:
         Dictionary with page contents, formatted as [link]\n---\n[content]
@@ -294,97 +325,98 @@ async def web_get(
         if not get_full:
             print(f"[Jina Reader] LLM extraction enabled (model: {llm_model})")
 
-    async with httpx.AsyncClient(timeout=40.0) as client:
-        # Create tasks for parallel execution (only for URLs not in cache)
-        tasks = []
-        urls_to_fetch = []
-        for url in urls:
-            if url in _url_cache:
-                if verbose:
-                    print(f"  [Jina Reader] Cache hit for: {url}")
-                # Will process cached content later
+    client = get_http_client(timeout=float(timeout))
+
+    # Create tasks for parallel execution (only for URLs not in cache)
+    tasks = []
+    urls_to_fetch = []
+    for url in urls:
+        if url in _url_cache:
+            if verbose:
+                print(f"  [Jina Reader] Cache hit for: {url}")
+            # Will process cached content later
+        else:
+            urls_to_fetch.append(url)
+            task = _get_single(client, url, jina_key, verbose)
+            tasks.append(task)
+
+    # Execute all fetches in parallel
+    fetch_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Process newly fetched URLs and update cache
+    for url, result in zip(urls_to_fetch, fetch_results):
+        if isinstance(result, Exception):
+            error_msg = str(result)
+            if verbose:
+                print(f"  [Jina Reader] ❌ Exception: {error_msg}")
+            contents.append(
+                {
+                    "url": url,
+                    "error": error_msg,
+                    "content": "",
+                }
+            )
+        else:
+            # Store raw content in cache
+            raw_content = result.get("content", "")
+            _url_cache[url] = raw_content
+
+            # Process content based on get_full flag
+            if get_full:
+                # Return raw content as-is
+                formatted_content = f"{url}\n---\n{raw_content}"
             else:
-                urls_to_fetch.append(url)
-                task = _get_single(client, url, jina_key, verbose)
-                tasks.append(task)
-
-        # Execute all fetches in parallel
-        fetch_results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # Process newly fetched URLs and update cache
-        for url, result in zip(urls_to_fetch, fetch_results):
-            if isinstance(result, Exception):
-                error_msg = str(result)
-                if verbose:
-                    print(f"  [Jina Reader] ❌ Exception: {error_msg}")
-                contents.append(
-                    {
-                        "url": url,
-                        "error": error_msg,
-                        "content": "",
-                    }
-                )
-            else:
-                # Store raw content in cache
-                raw_content = result.get("content", "")
-                _url_cache[url] = raw_content
-
-                # Process content based on get_full flag
-                if get_full:
-                    # Return raw content as-is
+                # Use LLM to extract relevant content
+                if not llm_client or not llm_model:
                     formatted_content = f"{url}\n---\n{raw_content}"
                 else:
-                    # Use LLM to extract relevant content
-                    if not llm_client or not llm_model:
-                        formatted_content = f"{url}\n---\n{raw_content}"
-                    else:
-                        extracted = await _extract_with_llm(
-                            llm_client,
-                            llm_model,
-                            raw_content,
-                            query,
-                            instructions,
-                            verbose,
-                        )
-                        formatted_content = f"{url}\n---\n{extracted}"
+                    extracted = await _extract_with_llm(
+                        llm_client,
+                        llm_model,
+                        raw_content,
+                        query,
+                        instructions,
+                        verbose,
+                    )
+                    formatted_content = f"{url}\n---\n{extracted}"
 
-                contents.append(
-                    {
-                        "url": url,
-                        "content": formatted_content,
-                    }
-                )
+            contents.append(
+                {
+                    "url": url,
+                    "content": formatted_content,
+                }
+            )
 
-        # Process cached URLs
-        for url in urls:
-            if url in _url_cache and url not in urls_to_fetch:
-                raw_content = _url_cache[url]
+    # Process cached URLs
+    for url in urls:
+        if url in _url_cache and url not in urls_to_fetch:
+            raw_content = _url_cache[url]
 
-                # Process content based on get_full flag
-                if get_full:
-                    # Return raw content as-is
+            # Process content based on get_full flag
+            if get_full:
+                # Return raw content as-is
+                formatted_content = f"{url}\n---\n{raw_content}"
+            else:
+                # Use LLM to extract relevant content
+                if not llm_client or not llm_model:
                     formatted_content = f"{url}\n---\n{raw_content}"
                 else:
-                    # Use LLM to extract relevant content
-                    if not llm_client or not llm_model:
-                        formatted_content = f"{url}\n---\n{raw_content}"
-                    else:
-                        extracted = await _extract_with_llm(
-                            llm_client,
-                            llm_model,
-                            raw_content,
-                            query,
-                            instructions,
-                            verbose,
-                        )
-                        formatted_content = f"{url}\n---\n{extracted}"
+                    extracted = await _extract_with_llm(
+                        llm_client,
+                        llm_model,
+                        raw_content,
+                        query,
+                        instructions,
+                        verbose,
+                    )
+                    formatted_content = f"{url}\n---\n{extracted}"
 
-                contents.append(
-                    {
-                        "url": url,
-                        "content": formatted_content,
-                    }
-                )
+            contents.append(
+                {
+                    "url": url,
+                    "content": formatted_content,
+                }
+            )
 
     if verbose:
         print(f"[Jina Reader] Completed {len(contents)} fetches")
@@ -468,8 +500,6 @@ async def _get_single(
 
     response = None
     try:
-        # URL encode the URL for the Jina API
-        encoded_url = httpx.URL(url).raw_path.decode("utf-8")
         response = await client.get(
             f"https://r.jina.ai/{url}",
             headers=headers,
@@ -517,6 +547,7 @@ async def execute_tool(
     llm_client: AsyncOpenAI | None = None,
     llm_model: str | None = None,
     query: str = "",
+    timeout: int = 30,
 ) -> dict[str, Any]:
     """Execute a tool by name.
 
@@ -528,13 +559,14 @@ async def execute_tool(
         llm_client: OpenAI client for LLM extraction (for web_get)
         llm_model: Model name for LLM extraction (for web_get)
         query: Original search query (for web_get extraction)
+        timeout: Timeout in seconds for Jina API calls (default: 30)
 
     Returns:
         Tool execution result
     """
     if tool_name == "web_search":
         queries = tool_args.get("queries", [])
-        return await web_search(queries, jina_key, verbose)
+        return await web_search(queries, jina_key, verbose, timeout)
     elif tool_name == "web_get":
         urls = tool_args.get("urls", [])
         instructions = tool_args.get("instructions", "")
@@ -548,6 +580,7 @@ async def execute_tool(
             llm_client,
             llm_model,
             query,
+            timeout,
         )
     elif tool_name == "final_answer":
         return {"answer": tool_args.get("answer", "")}

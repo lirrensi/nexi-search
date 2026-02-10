@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 try:
     from fastmcp import FastMCP
 except ImportError:
@@ -38,9 +36,9 @@ def nexi_search(
     Args:
         query: The search query to investigate
         effort: Search depth/effort level. Options:
-            - "s": Quick search (3 iterations)
-            - "m": Medium search (5 iterations, default)
-            - "l": Deep search (8 iterations)
+            - "s": Quick search (8 iterations)
+            - "m": Medium search (16 iterations, default)
+            - "l": Deep search (32 iterations)
         max_iter: Override maximum search iterations (optional)
         max_timeout: Force return after N seconds (optional, overrides config)
         verbose: Show detailed progress including tool calls and debug info
