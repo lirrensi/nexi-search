@@ -38,7 +38,7 @@ def test_mcp_server_import_structure():
     assert "query: str" in content
     assert "effort: str" in content
     assert "max_iter: int | None" in content
-    assert "max_timeout: int | None" in content
+    assert "time_target: int | None" in content
     assert "verbose: bool" in content
 
     print("OK: MCP server has correct import structure")

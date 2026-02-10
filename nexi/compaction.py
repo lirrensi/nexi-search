@@ -206,9 +206,7 @@ def rebuild_context(
     assistant_messages = [
         msg for msg in messages if msg.get("role") == "assistant" and msg.get("content")
     ]
-    preserved_messages = (
-        assistant_messages[-preserve_last_n:] if preserve_last_n > 0 else []
-    )
+    preserved_messages = assistant_messages[-preserve_last_n:] if preserve_last_n > 0 else []
 
     new_messages.extend(preserved_messages)
 

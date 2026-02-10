@@ -159,9 +159,7 @@ def print_result_summary(
         plain: Force plain mode
     """
     if plain or not is_tty():
-        print(
-            f"Search completed in {duration_s:.1f}s ({iterations} iterations, {tokens} tokens)"
-        )
+        print(f"Search completed in {duration_s:.1f}s ({iterations} iterations, {tokens} tokens)")
         if urls:
             print(f"URLs fetched: {len(urls)}")
     else:

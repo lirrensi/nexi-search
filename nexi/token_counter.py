@@ -62,9 +62,7 @@ def count_tokens(text: str, encoding: str = "cl100k_base") -> int:
     return len(tokens)
 
 
-def count_messages_tokens(
-    messages: list[dict[str, Any]], encoding: str = "cl100k_base"
-) -> int:
+def count_messages_tokens(messages: list[dict[str, Any]], encoding: str = "cl100k_base") -> int:
     """Count total tokens in a list of chat messages.
 
     Args:
