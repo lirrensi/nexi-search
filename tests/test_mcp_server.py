@@ -34,13 +34,13 @@ def test_nexi_search_tool_signature():
     assert "query" in params
     assert "effort" in params
     assert "max_iter" in params
-    assert "max_timeout" in params
+    assert "time_target" in params
     assert "verbose" in params
 
     # Check defaults
     assert sig.parameters["effort"].default == "m"
     assert sig.parameters["max_iter"].default is None
-    assert sig.parameters["max_timeout"].default is None
+    assert sig.parameters["time_target"].default is None
     assert sig.parameters["verbose"].default is False
 
 
@@ -61,7 +61,7 @@ def test_nexi_search_basic(mock_run_search, mock_ensure_config):
     mock_config.model = "test-model"
     mock_config.jina_key = "test-jina-key"
     mock_config.default_effort = "m"
-    mock_config.max_timeout = 300
+    mock_config.time_target = 600
     mock_config.max_output_tokens = 4000
     mock_ensure_config.return_value = mock_config
 
@@ -81,7 +81,7 @@ def test_nexi_search_basic(mock_run_search, mock_ensure_config):
         query="test query",
         effort="m",
         max_iter=5,
-        max_timeout=120,
+        time_target=120,
         verbose=False,
     )
 
@@ -97,7 +97,7 @@ def test_nexi_search_basic(mock_run_search, mock_ensure_config):
     assert call_kwargs["query"] == "test query"
     assert call_kwargs["effort"] == "m"
     assert call_kwargs["max_iter"] == 5
-    assert call_kwargs["max_timeout"] == 120
+    assert call_kwargs["time_target"] == 120
 
 
 @pytest.mark.skipif(
@@ -132,7 +132,7 @@ def test_nexi_search_runtime_error(mock_run_search, mock_ensure_config):
     mock_config.model = "test-model"
     mock_config.jina_key = "test-jina-key"
     mock_config.default_effort = "m"
-    mock_config.max_timeout = 300
+    mock_config.time_target = 600
     mock_config.max_output_tokens = 4000
     mock_ensure_config.return_value = mock_config
 

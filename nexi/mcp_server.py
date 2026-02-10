@@ -6,8 +6,7 @@ try:
     from fastmcp import FastMCP
 except ImportError:
     raise ImportError(
-        "fastmcp is required to run the MCP server. "
-        "Install it with: pip install fastmcp"
+        "fastmcp is required to run the MCP server. Install it with: pip install fastmcp"
     )
 
 from nexi.config import Config, ensure_config
@@ -22,7 +21,7 @@ def nexi_search(
     query: str,
     effort: str = "m",
     max_iter: int | None = None,
-    max_timeout: int | None = None,
+    time_target: int | None = None,
     verbose: bool = False,
 ) -> str:
     """Perform an intelligent web search using NEXI.
@@ -40,7 +39,7 @@ def nexi_search(
             - "m": Medium search (16 iterations, default)
             - "l": Deep search (32 iterations)
         max_iter: Override maximum search iterations (optional)
-        max_timeout: Force return after N seconds (optional, overrides config)
+        time_target: Soft limit: force final answer after N seconds (optional, overrides config)
         verbose: Show detailed progress including tool calls and debug info
 
     Returns:
@@ -54,7 +53,7 @@ def nexi_search(
 
     # Override config with tool parameters
     search_effort = effort or config.default_effort
-    search_timeout = max_timeout if max_timeout is not None else config.max_timeout
+    search_time_target = time_target if time_target is not None else config.time_target
 
     # Create temporary config with overrides
     search_config = Config(
@@ -63,7 +62,7 @@ def nexi_search(
         model=config.model,
         jina_key=config.jina_key,
         default_effort=search_effort,
-        max_timeout=search_timeout,
+        time_target=search_time_target,
         max_output_tokens=config.max_output_tokens,
     )
 
@@ -74,7 +73,7 @@ def nexi_search(
             config=search_config,
             effort=search_effort,
             max_iter=max_iter,
-            max_timeout=search_timeout,
+            time_target=search_time_target,
             verbose=verbose,
             progress_callback=None,
         )

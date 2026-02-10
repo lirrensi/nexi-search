@@ -44,7 +44,7 @@ Located at:
   "model": "google/gemini-2.5-flash-lite-preview-09-2025",
   "jina_key": "jina_...",
   "default_effort": "m",
-  "max_timeout": 300,
+  "time_target": 600,
   "max_output_tokens": 8000,
   "max_context": 128000,
   "auto_compact_thresh": 0.9,
@@ -110,7 +110,7 @@ nexi --verbose "see all the LLM calls"
 | `--plain` | No colors/emojis, script-friendly |
 | `--max-len N` | Limit output token length |
 | `--max-iter N` | Max search iterations |
-| `--max-timeout N` | Timeout in seconds |
+| `--time-target N` | Soft limit: force final answer after N seconds |
 | `--last N` | Show last N searches |
 | `--prev` | Show full result of latest search |
 | `--show ID` | Show specific search by ID |
@@ -132,7 +132,7 @@ nexi --verbose "see all the LLM calls"
 |-------|-----|
 | 401 Unauthorized | Check API keys in config |
 | 429 Rate Limit | Wait or switch to different/cheaper model |
-| Timeout | Increase `max_timeout` or use `--max-timeout` |
+| Time target hit | Increase `time_target` or use `--time-target` |
 | UTF-8 garbled (Windows) | Use `--plain` or Windows Terminal |
 
 ## MCP Server
@@ -170,7 +170,7 @@ uv run python -m nexi.mcp_server_cli http 0.0.0.0 8000
 - `query` (required): The search query
 - `effort` (optional): "s" (quick), "m" (medium, default), "l" (deep)
 - `max_iter` (optional): Override max iterations
-- `max_timeout` (optional): Force return after N seconds
+- `time_target` (optional): Soft limit: force final answer after N seconds
 - `verbose` (optional): Show detailed progress
 
 **Returns:** Comprehensive answer with sources in markdown format, including metadata (iterations, duration, tokens, URLs).

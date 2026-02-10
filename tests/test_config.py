@@ -18,7 +18,7 @@ def test_config_with_new_fields() -> None:
         model="test_model",
         jina_key="test_jina",
         default_effort="m",
-        max_timeout=240,
+        time_target=600,
         max_output_tokens=8192,
         max_context=128000,
         auto_compact_thresh=0.9,
@@ -41,7 +41,7 @@ def test_config_defaults() -> None:
         model="test_model",
         jina_key="test_jina",
         default_effort="m",
-        max_timeout=240,
+        time_target=600,
         max_output_tokens=8192,
     )
     assert config.max_context == 128000
@@ -59,7 +59,7 @@ def test_config_to_dict() -> None:
         model="test_model",
         jina_key="test_jina",
         default_effort="m",
-        max_timeout=240,
+        time_target=600,
         max_output_tokens=8192,
         max_context=128000,
     )
@@ -76,7 +76,7 @@ def test_config_from_dict() -> None:
         "model": "test_model",
         "jina_key": "test_jina",
         "default_effort": "m",
-        "max_timeout": 240,
+        "time_target": 600,
         "max_output_tokens": 8192,
         "max_context": 128000,
         "auto_compact_thresh": 0.9,
@@ -96,7 +96,7 @@ def test_validate_config_new_fields_valid() -> None:
         "api_key": "test_key",
         "model": "test_model",
         "default_effort": "m",
-        "max_timeout": 240,
+        "time_target": 600,
         "max_output_tokens": 8192,
         "max_context": 128000,
         "auto_compact_thresh": 0.9,
@@ -116,7 +116,7 @@ def test_validate_config_invalid_max_context() -> None:
         "api_key": "test_key",
         "model": "test_model",
         "default_effort": "m",
-        "max_timeout": 240,
+        "time_target": 600,
         "max_output_tokens": 8192,
         "max_context": -1,
     }
@@ -132,7 +132,7 @@ def test_validate_config_invalid_auto_compact_thresh() -> None:
         "api_key": "test_key",
         "model": "test_model",
         "default_effort": "m",
-        "max_timeout": 240,
+        "time_target": 600,
         "max_output_tokens": 8192,
         "auto_compact_thresh": 1.5,
     }
@@ -148,7 +148,7 @@ def test_validate_config_invalid_compact_target_words() -> None:
         "api_key": "test_key",
         "model": "test_model",
         "default_effort": "m",
-        "max_timeout": 240,
+        "time_target": 600,
         "max_output_tokens": 8192,
         "compact_target_words": -100,
     }
@@ -164,7 +164,7 @@ def test_validate_config_invalid_preserve_last_n_messages() -> None:
         "api_key": "test_key",
         "model": "test_model",
         "default_effort": "m",
-        "max_timeout": 240,
+        "time_target": 600,
         "max_output_tokens": 8192,
         "preserve_last_n_messages": -1,
     }
@@ -180,7 +180,7 @@ def test_validate_config_invalid_tokenizer_encoding() -> None:
         "api_key": "test_key",
         "model": "test_model",
         "default_effort": "m",
-        "max_timeout": 240,
+        "time_target": 600,
         "max_output_tokens": 8192,
         "tokenizer_encoding": "",
     }
@@ -197,7 +197,7 @@ def test_config_backward_compatibility() -> None:
         "model": "test_model",
         "jina_key": "test_jina",
         "default_effort": "m",
-        "max_timeout": 240,
+        "time_target": 600,
         "max_output_tokens": 8192,
     }
     config = Config.from_dict(config_dict)
@@ -258,7 +258,7 @@ def test_validate_config_optional_fields() -> None:
         "api_key": "test_key",
         "model": "test_model",
         "default_effort": "m",
-        "max_timeout": 240,
+        "time_target": 600,
         "max_output_tokens": 8192,
     }
     is_valid, errors = validate_config(config)
@@ -273,7 +273,7 @@ def test_validate_config_auto_compact_thresh_zero() -> None:
         "api_key": "test_key",
         "model": "test_model",
         "default_effort": "m",
-        "max_timeout": 240,
+        "time_target": 600,
         "max_output_tokens": 8192,
         "auto_compact_thresh": 0.0,
     }
@@ -289,7 +289,7 @@ def test_validate_config_auto_compact_thresh_one() -> None:
         "api_key": "test_key",
         "model": "test_model",
         "default_effort": "m",
-        "max_timeout": 240,
+        "time_target": 600,
         "max_output_tokens": 8192,
         "auto_compact_thresh": 1.0,
     }
@@ -305,7 +305,7 @@ def test_validate_config_preserve_last_n_zero() -> None:
         "api_key": "test_key",
         "model": "test_model",
         "default_effort": "m",
-        "max_timeout": 240,
+        "time_target": 600,
         "max_output_tokens": 8192,
         "preserve_last_n_messages": 0,
     }
