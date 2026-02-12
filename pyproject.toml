@@ -1,6 +1,6 @@
 [project]
 name = "nexi-search"
-version = "0.2.0"
+version = "0.3.1"
 description = "Self-hosted perplexity in your terminal - LLM-powered web search"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -16,6 +16,9 @@ dependencies = [
 mcp = [
     "fastmcp>=0.1.0",
 ]
+
+[project.scripts]
+nexi = "nexi.cli:main"
 
 [dependency-groups]
 dev = [

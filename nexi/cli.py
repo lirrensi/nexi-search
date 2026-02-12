@@ -54,9 +54,7 @@ from nexi.search import run_search_sync
 )
 @click.option("--max-len", type=int, help="Max output tokens")
 @click.option("--max-iter", type=int, help="Max search iterations")
-@click.option(
-    "--time-target", type=int, help="Soft limit: force final answer after N seconds (default 10min)"
-)
+@click.option("--time-target", type=int, help="Soft limit: force final answer after N seconds")
 @click.option("-v", "--verbose", is_flag=True, help="Show tool calls and debug info")
 @click.option("--plain", is_flag=True, help="Disable emoji/colors for scripting")
 @click.option("--last", type=int, metavar="N", help="Show last N searches")
@@ -184,11 +182,15 @@ def _run_search_command(
         llm_max_retries=config.llm_max_retries,
     )
 
-    # Print search start
-    print_search_start(query, plain)
+    # Determine if we should use compact mode (non-TTY and not verbose)
+    compact = not is_tty() and not verbose
+
+    # Print search start (skip in compact mode)
+    if not compact:
+        print_search_start(query, plain)
 
     # Create progress callback
-    progress_callback = create_progress_callback(verbose, plain)
+    progress_callback, tracker = create_progress_callback(verbose, plain, compact)
 
     try:
         # Run search
@@ -197,10 +199,16 @@ def _run_search_command(
             config=search_config,
             effort=search_effort,
             max_iter=max_iter,
-            time_target=search_time_target,
+            time_target=time_target,
             verbose=verbose,
-            progress_callback=progress_callback,
+            progress_callback=progress_callback,  # type: ignore[arg-type]
         )
+
+        # Print compact summary before answer in compact mode
+        if compact and tracker:
+            summary = tracker.get_summary()
+            if summary:
+                print(summary)
 
         # Print answer
         print_answer(result.answer, plain)
@@ -228,7 +236,7 @@ def _run_search_command(
         add_history_entry(entry)
 
     except KeyboardInterrupt:
-        print_warning("\nSearch cancelled")
+        print_warning("\\nSearch cancelled")
         sys.exit(130)
     except Exception as e:
         handle_error(f"Search failed: {e}", verbose=verbose)

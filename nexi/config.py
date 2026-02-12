@@ -25,7 +25,6 @@ DEFAULT_CONFIG = {
     "base_url": "https://openrouter.ai/api/v1",
     "model": "google/gemini-2.5-flash-lite",
     "default_effort": "m",
-    "time_target": 600,
     "max_output_tokens": 8192,
     "max_context": 128000,
     "auto_compact_thresh": 0.9,
@@ -116,8 +115,8 @@ class Config:
     model: str
     jina_key: str
     default_effort: str
-    time_target: int
     max_output_tokens: int
+    time_target: int | None = None
     max_context: int = 128000
     auto_compact_thresh: float = 0.9
     compact_target_words: int = 5000
@@ -155,7 +154,6 @@ def validate_config(config: dict[str, Any]) -> tuple[bool, list[str]]:
         "api_key",
         "model",
         "default_effort",
-        "time_target",
         "max_output_tokens",
     ]
     for field in required:
@@ -189,11 +187,6 @@ def validate_config(config: dict[str, Any]) -> tuple[bool, list[str]]:
     effort = config.get("default_effort", "")
     if effort not in EFFORT_LEVELS:
         errors.append(f"default_effort must be one of: {', '.join(EFFORT_LEVELS.keys())}")
-
-    # Validate time_target
-    time_target = config.get("time_target", 0)
-    if not isinstance(time_target, int) or time_target <= 0:
-        errors.append("time_target must be a positive integer")
 
     # Validate max_output_tokens
     tokens = config.get("max_output_tokens", 0)
@@ -325,12 +318,6 @@ def run_first_time_setup() -> Config:
         default="m",
     ).ask()
 
-    # Max timeout
-    time_target = questionary.text(
-        "Time target (seconds):",
-        default=str(DEFAULT_CONFIG["time_target"]),
-    ).ask()
-
     # Max output tokens
     max_output_tokens = questionary.text(
         "Max output tokens:",
@@ -398,7 +385,6 @@ def run_first_time_setup() -> Config:
         model=model or DEFAULT_CONFIG["model"],
         jina_key=jina_key or "",
         default_effort=default_effort or "m",
-        time_target=int(time_target) if time_target else DEFAULT_CONFIG["time_target"],
         max_output_tokens=int(max_output_tokens)
         if max_output_tokens
         else DEFAULT_CONFIG["max_output_tokens"],

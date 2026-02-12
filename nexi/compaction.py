@@ -135,8 +135,7 @@ async def generate_summary(
             messages=[
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": content},
-            ],
-            max_tokens=target_words * 2,  # Rough estimate: 2 tokens per word
+            ]
         )
 
         summary = response.choices[0].message.content or ""

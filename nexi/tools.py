@@ -344,6 +344,7 @@ async def web_get(
     fetch_results = await asyncio.gather(*tasks, return_exceptions=True)
 
     # Process newly fetched URLs and update cache
+    fetched_urls_with_content = []
     for url, result in zip(urls_to_fetch, fetch_results):
         if isinstance(result, Exception):
             error_msg = str(result)
@@ -360,57 +361,67 @@ async def web_get(
             # Store raw content in cache
             raw_content = result.get("content", "")
             _url_cache[url] = raw_content
-
-            # Process content based on get_full flag
-            if get_full:
-                # Return raw content as-is
-                formatted_content = f"{url}\n---\n{raw_content}"
-            else:
-                # Use LLM to extract relevant content
-                if not llm_client or not llm_model:
-                    formatted_content = f"{url}\n---\n{raw_content}"
-                else:
-                    extracted = await _extract_with_llm(
-                        llm_client,
-                        llm_model,
-                        raw_content,
-                        query,
-                        instructions,
-                        verbose,
-                    )
-                    formatted_content = f"{url}\n---\n{extracted}"
-
-            contents.append(
-                {
-                    "url": url,
-                    "content": formatted_content,
-                }
-            )
+            fetched_urls_with_content.append((url, raw_content))
 
     # Process cached URLs
+    cached_urls_with_content = []
     for url in urls:
         if url in _url_cache and url not in urls_to_fetch:
             raw_content = _url_cache[url]
+            cached_urls_with_content.append((url, raw_content))
 
-            # Process content based on get_full flag
-            if get_full:
-                # Return raw content as-is
-                formatted_content = f"{url}\n---\n{raw_content}"
+    # Parallel LLM extraction for all URLs (fetched + cached)
+    all_urls_with_content = fetched_urls_with_content + cached_urls_with_content
+
+    if all_urls_with_content and not get_full and llm_client and llm_model:
+        if verbose:
+            print(
+                f"[Jina Reader] Running parallel LLM extraction for {len(all_urls_with_content)} URLs..."
+            )
+
+        # Create extraction tasks
+        extraction_tasks = []
+        for url, raw_content in all_urls_with_content:
+            task = _extract_with_llm(
+                llm_client,
+                llm_model,
+                raw_content,
+                query,
+                instructions,
+                verbose,
+            )
+            extraction_tasks.append((url, task))
+
+        # Execute all extractions in parallel
+        extraction_results = await asyncio.gather(
+            *[task for _, task in extraction_tasks], return_exceptions=True
+        )
+
+        # Build contents list with extracted content
+        for (url, _), result in zip(extraction_tasks, extraction_results):
+            if isinstance(result, Exception):
+                error_msg = str(result)
+                if verbose:
+                    print(f"  [Jina Reader] ❌ LLM extraction error for {url}: {error_msg}")
+                contents.append(
+                    {
+                        "url": url,
+                        "error": error_msg,
+                        "content": "",
+                    }
+                )
             else:
-                # Use LLM to extract relevant content
-                if not llm_client or not llm_model:
-                    formatted_content = f"{url}\n---\n{raw_content}"
-                else:
-                    extracted = await _extract_with_llm(
-                        llm_client,
-                        llm_model,
-                        raw_content,
-                        query,
-                        instructions,
-                        verbose,
-                    )
-                    formatted_content = f"{url}\n---\n{extracted}"
-
+                formatted_content = f"{url}\n---\n{result}"
+                contents.append(
+                    {
+                        "url": url,
+                        "content": formatted_content,
+                    }
+                )
+    else:
+        # No LLM extraction needed (get_full=True or no client/model)
+        for url, raw_content in all_urls_with_content:
+            formatted_content = f"{url}\n---\n{raw_content}"
             contents.append(
                 {
                     "url": url,
@@ -466,7 +477,7 @@ async def _extract_with_llm(
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": content},
             ],
-            max_tokens=2000,
+            max_tokens=16384,
         )
 
         extracted = response.choices[0].message.content or "No content extracted"

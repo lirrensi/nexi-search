@@ -32,6 +32,78 @@ class SearchResult:
 ProgressCallback = Callable[[str, int, int], None]
 
 
+async def _request_final_answer(
+    messages: list[dict[str, Any]],
+    client: AsyncOpenAI,
+    model: str,
+    max_tokens: int,
+    verbose: bool = False,
+) -> str:
+    """Request a final answer from the LLM using gathered information.
+
+    Args:
+        messages: Conversation history
+        client: OpenAI client
+        model: Model name
+        max_tokens: Max output tokens
+        verbose: Show detailed progress
+
+    Returns:
+        Final answer string
+    """
+    # Add a user message requesting final answer
+    final_messages = messages.copy()
+    final_messages.append(
+        {
+            "role": "user",
+            "content": "Please provide a comprehensive final answer based on all the information gathered so far. Use the final_answer tool to submit your response.",
+        }
+    )
+
+    try:
+        if verbose:
+            print("[Final Stage] Requesting final answer from LLM...")
+
+        response = await client.chat.completions.create(
+            model=model,
+            messages=final_messages,
+            tools=_get_tool_schemas(),
+            tool_choice="auto",
+            max_tokens=max_tokens,
+        )
+
+        if verbose:
+            print("[Final Stage] Response received")
+
+        message = response.choices[0].message
+
+        # Check for tool calls (should be final_answer)
+        if message.tool_calls:
+            tool_call = message.tool_calls[0]
+            tool_name = tool_call.function.name
+            tool_args = json.loads(tool_call.function.arguments)
+
+            if tool_name == "final_answer":
+                return tool_args.get("answer", "No answer provided")
+            else:
+                # LLM called a different tool, extract content instead
+                return message.content or "No answer provided"
+        else:
+            # No tool call, return content directly
+            return message.content or "No answer provided"
+
+    except Exception as e:
+        if verbose:
+            print(f"[Final Stage] Error: {e}")
+        # Fallback: extract last tool content
+        last_content = ""
+        for msg in reversed(messages):
+            if msg.get("role") == "tool":
+                last_content = msg.get("content", "")
+                break
+        return f"Error generating final answer: {e}\n\nLast gathered information:\n{last_content[:1000] if last_content else 'No information gathered.'}"
+
+
 async def run_search(
     query: str,
     config: Config,
@@ -48,7 +120,7 @@ async def run_search(
         config: NEXI configuration
         effort: Effort level (s/m/l)
         max_iter: Override max iterations
-        time_target: Override time target
+        time_target: Optional time limit in seconds (None = no limit)
         verbose: Show detailed progress
         progress_callback: Called with (message, iteration, total)
 
@@ -71,7 +143,7 @@ async def run_search(
     if not isinstance(max_iter, int):
         max_iter = EFFORT_LEVELS["m"]["max_iter"]
 
-    # Determine timeout
+    # Determine timeout (use CLI option if provided, otherwise use config)
     time_target_total = time_target if time_target is not None else config.time_target
 
     # Load system prompt
@@ -105,12 +177,19 @@ async def run_search(
 
     try:
         for current_iteration in range(1, max_iter + 1):
-            # Check timeout
-            elapsed = time.time() - start_time
-            if elapsed >= time_target_total:
-                report_progress(f"Time target reached after {elapsed:.1f}s", current_iteration)
-                final_answer = _force_answer(messages, "Time target reached")
-                break
+            # Check timeout (only if time_target is set)
+            if time_target_total is not None:
+                elapsed = time.time() - start_time
+                if elapsed >= time_target_total:
+                    report_progress(f"Time target reached after {elapsed:.1f}s", current_iteration)
+                    final_answer = await _request_final_answer(
+                        messages=messages,
+                        client=client,
+                        model=config.model,
+                        max_tokens=config.max_output_tokens,
+                        verbose=verbose,
+                    )
+                    break
 
             report_progress(f"Iteration {current_iteration}/{max_iter}", current_iteration)
 
@@ -204,7 +283,6 @@ async def run_search(
                     result = await execute_tool(
                         tool_name, tool_args, config.jina_key, verbose, timeout=config.jina_timeout
                     )
-                    result = await execute_tool(tool_name, tool_args, config.jina_key, verbose)
 
                     if verbose:
                         print(
@@ -336,9 +414,17 @@ async def run_search(
                 break
 
         else:
-            # Max iterations reached
-            report_progress(f"Max iterations ({max_iter}) reached", max_iter)
-            final_answer = _force_answer(messages, f"Reached maximum iterations ({max_iter})")
+            # Max iterations reached - enter final stage
+            report_progress(
+                f"Max iterations ({max_iter}) reached, requesting final answer", max_iter
+            )
+            final_answer = await _request_final_answer(
+                messages=messages,
+                client=client,
+                model=config.model,
+                max_tokens=config.max_output_tokens,
+                verbose=verbose,
+            )
 
     except asyncio.CancelledError:
         report_progress("Search cancelled", 0)
@@ -410,7 +496,7 @@ def run_search_sync(
         config: NEXI configuration
         effort: Effort level (s/m/l)
         max_iter: Override max iterations
-        time_target: Override time target
+        time_target: Optional time limit in seconds (None = no limit)
         verbose: Show detailed progress
         progress_callback: Called with (message, iteration, total)
 

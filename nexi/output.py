@@ -12,6 +12,45 @@ from rich.markdown import Markdown
 _console: Console | None = None
 
 
+class CompactProgressTracker:
+    """Track progress in compact mode for non-TTY sessions."""
+
+    def __init__(self) -> None:
+        """Initialize the tracker."""
+        self.iterations: list[int] = []
+        self.errors: list[str] = []
+
+    def add_iteration(self, iteration: int) -> None:
+        """Add an iteration to the tracker.
+
+        Args:
+            iteration: Iteration number
+        """
+        if iteration not in self.iterations:
+            self.iterations.append(iteration)
+
+    def add_error(self, error: str) -> None:
+        """Add an error to the tracker.
+
+        Args:
+            error: Error message
+        """
+        self.errors.append(error)
+
+    def get_summary(self) -> str:
+        """Get the compact progress summary.
+
+        Returns:
+            Summary string like "[iteration 1 2 3 4 5]" or "[iteration 1 2 3] [error: ...]"
+        """
+        parts: list[str] = []
+        if self.iterations:
+            parts.append(f"[iteration {' '.join(map(str, self.iterations))}]")
+        if self.errors:
+            parts.append(f"[error: {' | '.join(self.errors)}]")
+        return " ".join(parts) if parts else ""
+
+
 def get_console() -> Console:
     """Get or create console instance."""
     global _console
@@ -224,22 +263,33 @@ def print_success(message: str, plain: bool = False) -> None:
 
 
 def create_progress_callback(
-    verbose: bool = False, plain: bool = False
-) -> Callable[[str, int, int], None]:
+    verbose: bool = False,
+    plain: bool = False,
+    compact: bool = False,
+) -> tuple[Callable[[str, int, int], None], CompactProgressTracker | None]:
     """Create a progress callback function.
 
     Args:
         verbose: Show detailed progress
         plain: Force plain mode
+        compact: Use compact mode (track iterations silently, print summary at end)
 
     Returns:
-        Callback function for search progress
+        Tuple of (callback function, tracker instance or None)
     """
+    tracker = CompactProgressTracker() if compact else None
 
     def callback(message: str, iteration: int, total: int) -> None:
-        if verbose:
+        if compact and tracker:
+            # In compact mode, track iterations silently
+            if iteration > 0:
+                tracker.add_iteration(iteration)
+            # Track errors
+            if "error" in message.lower() or "timeout" in message.lower():
+                tracker.add_error(message)
+        elif verbose:
             print(f"[{iteration}/{total}] {message}")
         else:
             print_progress(message, plain)
 
-    return callback
+    return callback, tracker

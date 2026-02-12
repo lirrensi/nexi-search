@@ -128,7 +128,7 @@ def test_print_success(capsys):
 
 def test_create_progress_callback_verbose(capsys):
     """Test create_progress_callback with verbose=True."""
-    callback = create_progress_callback(verbose=True, plain=True)
+    callback, _ = create_progress_callback(verbose=True, plain=True)
     callback("Test message", 1, 5)
 
     captured = capsys.readouterr()
@@ -138,7 +138,7 @@ def test_create_progress_callback_verbose(capsys):
 
 def test_create_progress_callback_non_verbose(capsys):
     """Test create_progress_callback with verbose=False."""
-    callback = create_progress_callback(verbose=False, plain=True)
+    callback, _ = create_progress_callback(verbose=False, plain=True)
     callback("Test message", 1, 5)
 
     captured = capsys.readouterr()
