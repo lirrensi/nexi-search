@@ -322,7 +322,7 @@ def _interactive_mode() -> None:
                 max_len=None,
                 max_iter=None,
                 time_target=None,
-                verbose=False,
+                verbose=True,  # Enable verbose mode in interactive mode for better progress info
                 plain=False,
             )
 

@@ -147,15 +147,39 @@ def print_search_start(query: str, plain: bool = False) -> None:
         console.print(f'🔍 Searching for "{query}"...')
 
 
-def print_progress(message: str, plain: bool = False) -> None:
-    """Print progress message.
+def print_progress(
+    message: str,
+    plain: bool = False,
+    context_size: int | None = None,
+    max_context: int | None = None,
+    urls: list[str] | None = None,
+) -> None:
+    """Print progress message with optional details.
 
     Args:
         message: Progress message
         plain: Force plain mode
+        context_size: Current context size in tokens
+        max_context: Maximum context size for formatting
+        urls: URLs being processed
     """
     if plain or not is_tty():
-        print(message)
+        # Format context as current/max
+        if context_size is not None and max_context is not None:
+            ctx_str = f" | Context: {format_context_size(context_size, max_context)}"
+        elif context_size is not None:
+            ctx_str = f" | Context: {format_context_size(context_size, context_size)}"
+        else:
+            ctx_str = ""
+
+        # Add URLs
+        url_str = ""
+        if urls:
+            url_str = f" | URLs: {', '.join(urls[:3])}"
+            if len(urls) > 3:
+                url_str += f"... +{len(urls) - 3} more"
+
+        print(f"[{message}{ctx_str}{url_str}]")
     else:
         console = get_console()
         # Add appropriate emoji based on message content
@@ -169,6 +193,37 @@ def print_progress(message: str, plain: bool = False) -> None:
             console.print(f"⚠️  {message}")
         else:
             console.print(message)
+
+
+def format_context_size(current: int, max_: int) -> str:
+    """Format context size as 'current/max' with k suffix.
+
+    Args:
+        current: Current token count
+        max_: Maximum token count
+
+    Returns:
+        Formatted string like '12k/64k'
+    """
+    if max_ == 0:
+        return f"{current}"
+
+    # Convert to k (thousands) for readability
+    current_k = current / 1000
+    max_k = max_ / 1000
+
+    # Format with 1 decimal place if needed, otherwise integer
+    if current_k == int(current_k):
+        current_str = f"{int(current_k)}k"
+    else:
+        current_str = f"{current_k:.1f}k"
+
+    if max_k == int(max_k):
+        max_str = f"{int(max_k)}k"
+    else:
+        max_str = f"{max_k:.1f}k"
+
+    return f"{current_str}/{max_str}"
 
 
 def print_answer(
@@ -188,12 +243,15 @@ def print_answer(
         include_citations: Whether to append citations section
     """
     # Process answer with citations if provided
+    # NOTE: We don't add citations to answer text to avoid markdown collapsing line breaks
+    # We print citations separately as plain text
     if url_citations and include_citations:
+        # Extract citations from answer if model added them
         answer = process_answer_with_citations(
             answer,
             url_citations,
             url_to_title,
-            include_citations_section=True,
+            include_citations_section=False,  # Don't add citations to answer text
             plain=plain,
         )
 
@@ -311,7 +369,13 @@ def create_progress_callback(
     """
     tracker = CompactProgressTracker() if compact else None
 
-    def callback(message: str, iteration: int, total: int) -> None:
+    def callback(
+        message: str,
+        iteration: int,
+        total: int,
+        context_size: int | None = None,
+        urls: list[str] | None = None,
+    ) -> None:
         if compact and tracker:
             # In compact mode, track iterations silently
             if iteration > 0:
@@ -322,6 +386,6 @@ def create_progress_callback(
         elif verbose:
             print(f"[{iteration}/{total}] {message}")
         else:
-            print_progress(message, plain)
+            print_progress(message, plain, context_size, total, urls)
 
     return callback, tracker

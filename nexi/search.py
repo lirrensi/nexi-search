@@ -229,10 +229,15 @@ async def run_search(
 
         return {"pages": updated_pages}
 
-    def report_progress(message: str, iteration: int = 0) -> None:
+    def report_progress(
+        message: str,
+        iteration: int = 0,
+        context_size: int | None = None,
+        urls: list[str] | None = None,
+    ) -> None:
         """Report progress via callback."""
         if progress_callback:
-            progress_callback(message, iteration, max_iter)
+            progress_callback(message, iteration, max_iter, context_size, urls)
 
     report_progress("Starting search...", 0)
 
@@ -487,8 +492,29 @@ async def run_search(
 
             else:
                 # No tool call - model should have used final_answer
-                # Force an answer
-                final_answer = message.content or "No answer provided"
+                # Force an answer, but filter out tool call-like content
+                content = message.content or "No answer provided"
+                # Filter out tool call-like content that should not be visible
+                if "<tool call" in content or "<function_calls>" in content:
+                    # Model misbehaved - returning tool call text instead of using tools
+                    if verbose:
+                        print(f"[Warning] Model returned tool call text instead of using tools")
+                    # Try to extract actual answer content after tool call markers
+                    lines_list = content.split(chr(10))
+                    answer_lines = []
+                    in_tool_call = False
+                    for line in lines_list:
+                        if "<tool call" in line or "<function_calls>" in line:
+                            in_tool_call = True
+                        elif in_tool_call and (">" in line or "</" in line):
+                            # End of tool call block
+                            if "</tool" in line or "</function_calls>" in line:
+                                in_tool_call = False
+                        elif not in_tool_call and line.strip():
+                            answer_lines.append(line)
+                    final_answer = chr(10).join(answer_lines).strip() or "No answer provided"
+                else:
+                    final_answer = content
                 report_progress("Answer ready!", current_iteration)
                 break
 
