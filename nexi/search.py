@@ -23,6 +23,8 @@ class SearchResult:
 
     answer: str
     urls: list[str] = field(default_factory=list)
+    url_citations: dict[str, int] = field(default_factory=dict)  # URL -> citation number
+    url_to_title: dict[str, str] = field(default_factory=dict)  # URL -> title
     iterations: int = 0
     duration_s: float = 0.0
     tokens: int = 0
@@ -168,6 +170,65 @@ async def run_search(
     final_answer = ""
     current_iteration = 0
 
+    # URL citation tracking - stable numbering throughout the search
+    url_to_number: dict[str, int] = {}  # URL -> [1], [2], etc.
+    next_url_number: int = 1
+
+    def get_url_number(url: str) -> int:
+        """Get stable citation number for URL, assigning new one if needed."""
+        nonlocal next_url_number
+        if url not in url_to_number:
+            url_to_number[url] = next_url_number
+            next_url_number += 1
+        return url_to_number[url]
+
+    def get_url_title(url: str) -> str:
+        """Get title for URL. Returns empty string if not set."""
+        return url_to_title.get(url, "")
+
+    url_to_title: dict[str, str] = {}  # URL -> title (from web_search results)
+
+    def get_sources_list() -> str:
+        """Generate the current sources list for the model with format: [1] Title - URL."""
+        if not url_to_number:
+            return ""
+        lines = ["", "Sources:"]
+        # Sort by citation number
+        for num in sorted(url_to_number.values()):
+            # Find URL for this number
+            url = [u for u, n in url_to_number.items() if n == num][0]
+            # Get title if available (from web_search results)
+            title = get_url_title(url)
+            if title:
+                lines.append(f"[{num}] {title} - {url}")
+            else:
+                lines.append(f"[{num}] {url}")
+        return "\n".join(lines)
+
+    def update_tool_result_with_sources(result: dict[str, Any]) -> dict[str, Any]:
+        """Append current sources list to tool result content."""
+        # Only update web_get results
+        if "pages" not in result:
+            return result
+
+        sources_list = get_sources_list()
+        if not sources_list:
+            return result
+
+        # Update each page's content to include sources at the end
+        updated_pages = []
+        for page in result.get("pages", []):
+            updated_page = page.copy()
+            content = page.get("content", "")
+            # Remove old sources section if present
+            if "Sources:" in content:
+                content = content.split("Sources:")[0].rstrip()
+            # Add fresh sources list
+            updated_page["content"] = content + sources_list
+            updated_pages.append(updated_page)
+
+        return {"pages": updated_pages}
+
     def report_progress(message: str, iteration: int = 0) -> None:
         """Report progress via callback."""
         if progress_callback:
@@ -296,6 +357,14 @@ async def run_search(
                                     f"  ✓ '{search.get('query')}' returned {len(search.get('results', []))} results"
                                 )
 
+                    # Capture titles from search results for citations
+                    for search_result in result.get("searches", []):
+                        for item in search_result.get("results", []):
+                            if "url" in item:
+                                url = item["url"]
+                                if "title" in item:
+                                    url_to_title[url] = item["title"]
+
                     # Add tool result to conversation
                     messages.append(
                         {
@@ -324,6 +393,10 @@ async def run_search(
                 elif tool_name == "web_get":
                     urls = tool_args.get("urls", [])
                     report_progress(f"Reading {len(urls)} pages...", current_iteration)
+
+                    # Get citation numbers for URLs BEFORE fetching (stable numbering)
+                    url_numbers = {url: get_url_number(url) for url in urls}
+
                     result = await execute_tool(
                         tool_name,
                         tool_args,
@@ -332,6 +405,9 @@ async def run_search(
                         client,
                         config.model,
                         query,
+                        timeout=config.jina_timeout,
+                        url_numbers=url_numbers,  # Pass URL numbers for citation markers
+                        url_titles=url_to_title,  # Pass URL titles for sources list
                     )
 
                     if verbose:
@@ -398,6 +474,9 @@ async def run_search(
                             ],
                         }
                     )
+                    # Update result with current sources list for the model to see
+                    result = update_tool_result_with_sources(result)
+
                     messages.append(
                         {
                             "role": "tool",
@@ -436,6 +515,8 @@ async def run_search(
     return SearchResult(
         answer=final_answer,
         urls=list(urls_fetched),
+        url_citations=url_to_number,  # Include URL citation mapping
+        url_to_title=url_to_title,  # Include URL title mapping
         iterations=current_iteration,
         duration_s=duration,
         tokens=total_tokens,

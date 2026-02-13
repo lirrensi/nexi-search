@@ -8,6 +8,8 @@ from collections.abc import Callable
 from rich.console import Console
 from rich.markdown import Markdown
 
+from nexi.citations import process_answer_with_citations, format_citations_section
+
 # Global console instance
 _console: Console | None = None
 
@@ -169,15 +171,45 @@ def print_progress(message: str, plain: bool = False) -> None:
             console.print(message)
 
 
-def print_answer(answer: str, plain: bool = False) -> None:
-    """Print the final answer.
+def print_answer(
+    answer: str,
+    plain: bool = False,
+    url_citations: dict[str, int] | None = None,
+    url_to_title: dict[str, str] | None = None,
+    include_citations: bool = True,
+) -> None:
+    """Print the final answer with optional citations.
 
     Args:
         answer: Answer text (markdown)
         plain: Force plain mode
+        url_citations: URL -> citation number mapping
+        url_to_title: URL -> title mapping (for formatting sources list)
+        include_citations: Whether to append citations section
     """
+    # Process answer with citations if provided
+    if url_citations and include_citations:
+        answer = process_answer_with_citations(
+            answer,
+            url_citations,
+            url_to_title,
+            include_citations_section=True,
+            plain=plain,
+        )
+
     print()  # Blank line before answer
     print_markdown(answer, plain)
+
+    # Print citations section as plain text to preserve line breaks
+    if url_citations and include_citations:
+        citations_section = format_citations_section(
+            {num: url for url, num in url_citations.items()},
+            url_to_title,
+            plain=plain,
+        )
+        if citations_section:
+            print(citations_section)
+
     print()  # Blank line after answer
 
 

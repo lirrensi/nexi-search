@@ -75,10 +75,13 @@ Guidelines:
 1. Start with web_search to gather initial information
 2. Use parallel queries to explore different angles efficiently
 3. Use web_get to read full pages for detailed information when needed
-4. Synthesize information from multiple sources
-5. Call final_answer when you have a complete answer
-6. You have up to {max_iter} iterations - use them wisely
-7. If you reach max iterations, provide your best answer with available information
+4. Each web_get result includes citation markers like [1], [2] for each URL
+5. When providing the final answer, use [1], [2], etc. to cite sources
+6. Synthesize information from multiple sources
+7. Call final_answer when you have a complete answer
+8. You have up to {max_iter} iterations - use them wisely
+9. If you reach max iterations, provide your best answer with available information
+10. Do not end final_answer with followup questions
 
 Always respond with a tool call.
 """

@@ -210,8 +210,8 @@ def _run_search_command(
             if summary:
                 print(summary)
 
-        # Print answer
-        print_answer(result.answer, plain)
+        # Print answer with citations
+        print_answer(result.answer, plain, result.url_citations, result.url_to_title)
 
         # Print summary in verbose mode
         if verbose:

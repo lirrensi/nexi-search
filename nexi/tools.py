@@ -301,6 +301,8 @@ async def web_get(
     llm_model: str | None = None,
     query: str = "",
     timeout: int = 30,
+    url_numbers: dict[str, int] | None = None,
+    url_titles: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Fetch and extract content from URLs using Jina Reader + LLM summarizer.
 
@@ -359,7 +361,7 @@ async def web_get(
             )
         else:
             # Store raw content in cache
-            raw_content = result.get("content", "")
+            raw_content = result.get("content", "") if isinstance(result, dict) else ""
             _url_cache[url] = raw_content
             fetched_urls_with_content.append((url, raw_content))
 
@@ -411,7 +413,12 @@ async def web_get(
                     }
                 )
             else:
-                formatted_content = f"{url}\n---\n{result}"
+                # Add citation number if provided
+                citation_num = url_numbers.get(url) if url_numbers else None
+                if citation_num:
+                    formatted_content = f"[{citation_num}] {url}\n---\n{result}"
+                else:
+                    formatted_content = f"{url}\n---\n{result}"
                 contents.append(
                     {
                         "url": url,
@@ -421,7 +428,12 @@ async def web_get(
     else:
         # No LLM extraction needed (get_full=True or no client/model)
         for url, raw_content in all_urls_with_content:
-            formatted_content = f"{url}\n---\n{raw_content}"
+            # Add citation number if provided
+            citation_num = url_numbers.get(url) if url_numbers else None
+            if citation_num:
+                formatted_content = f"[{citation_num}] {url}\n---\n{raw_content}"
+            else:
+                formatted_content = f"{url}\n---\n{raw_content}"
             contents.append(
                 {
                     "url": url,
@@ -433,6 +445,28 @@ async def web_get(
         print(f"[Jina Reader] Completed {len(contents)} fetches")
 
     return {"pages": contents}
+
+
+def _generate_sources_list(
+    url_numbers: dict[str, int] | None,
+    url_titles: dict[str, str] | None,
+) -> str:
+    """Generate sources list with format: [1] Title - URL."""
+    if not url_numbers:
+        return ""
+
+    lines = ["", "Sources:"]
+    # Sort by citation number
+    for num in sorted(url_numbers.values()):
+        # Find URL for this number
+        url = [u for u, n in url_numbers.items() if n == num][0]
+        # Get title if available
+        title = (url_titles.get(url) if url_titles else "") if url in (url_titles or {}) else ""
+        if title:
+            lines.append(f"[{num}] {title} - {url}")
+        else:
+            lines.append(f"[{num}] {url}")
+    return "\n".join(lines)
 
 
 async def _extract_with_llm(
@@ -559,6 +593,8 @@ async def execute_tool(
     llm_model: str | None = None,
     query: str = "",
     timeout: int = 30,
+    url_numbers: dict[str, int] | None = None,
+    url_titles: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Execute a tool by name.
 
@@ -571,6 +607,8 @@ async def execute_tool(
         llm_model: Model name for LLM extraction (for web_get)
         query: Original search query (for web_get extraction)
         timeout: Timeout in seconds for Jina API calls (default: 30)
+        url_numbers: URL -> citation number mapping (for web_get)
+        url_titles: URL -> title mapping (for sources list in web_get)
 
     Returns:
         Tool execution result
@@ -592,6 +630,8 @@ async def execute_tool(
             llm_model,
             query,
             timeout,
+            url_numbers,
+            url_titles,
         )
     elif tool_name == "final_answer":
         return {"answer": tool_args.get("answer", "")}
