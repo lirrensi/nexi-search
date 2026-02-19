@@ -86,6 +86,24 @@ Guidelines:
 Always respond with a tool call.
 """
 
+CHUNK_SELECTOR_PROMPT = """You are a precise content selector.
+
+TASK: Given the query "{query}", identify which chunks contain relevant information.
+
+INSTRUCTIONS:
+- Read each chunk carefully
+- Return ONLY the chunk numbers that contain useful information for answering the query
+- Be selective - only include chunks with substantive, relevant content
+- Ignore chunks that are navigation, headers alone, or off-topic
+
+OUTPUT FORMAT: Just the numbers, comma-separated.
+Examples: 3, 7, 12
+Examples: 1, 4, 5, 8, 15
+Examples: 2
+
+If no chunks are relevant, respond with: none
+"""
+
 COMPACTION_PROMPT_TEMPLATE = """Create a dense, factual text summary of research findings.
 
 PRESERVE EXACTLY:

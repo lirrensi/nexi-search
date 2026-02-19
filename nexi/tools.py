@@ -3,12 +3,102 @@
 from __future__ import annotations
 
 import asyncio
+import re
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
 from openai import AsyncOpenAI
 
-from nexi.config import EXTRACTOR_PROMPT_TEMPLATE
+from nexi.config import CHUNK_SELECTOR_PROMPT, EXTRACTOR_PROMPT_TEMPLATE
+
+
+@dataclass
+class Chunk:
+    """A chunk of text with metadata."""
+
+    number: int
+    content: str
+    char_count: int = field(init=False)
+    word_count: int = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.char_count = len(self.content)
+        self.word_count = len(self.content.split())
+
+    def __str__(self) -> str:
+        return f"[CHUNK {self.number}] ({self.char_count} chars, {self.word_count} words)\n{self.content}"
+
+
+def create_logical_chunks(md: str, target_chars: int = 480, max_chars: int = 720) -> list[Chunk]:
+    """Heading-aware logical chunking for clean Jina Markdown.
+
+    Respects headings, merges small paragraphs, splits oversized chunks.
+
+    Args:
+        md: Markdown content
+        target_chars: Target chars per chunk
+        max_chars: Max chars before forcing split
+
+    Returns:
+        List of Chunk objects
+    """
+    if len(md) < 300:
+        return [Chunk(number=1, content=md.strip())]
+
+    # Split while keeping headings with their content
+    segments = re.split(r"(^#{1,6}\s+.+$)", md, flags=re.MULTILINE)
+
+    chunks = []
+    current = []
+
+    for seg in segments:
+        seg = seg.strip()
+        if not seg:
+            continue
+        current.append(seg)
+
+        combined = "\n\n".join(current)
+        if len(combined) > max_chars and len(current) > 1:
+            chunks.append("\n\n".join(current[:-1]))
+            current = [current[-1]]
+
+    if current:
+        chunks.append("\n\n".join(current))
+
+    # Final gentle merge of any tiny leftover chunks
+    final = []
+    for chunk in chunks:
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        if final and len(final[-1]) + len(chunk) < target_chars * 1.6:
+            final[-1] += "\n\n" + chunk
+        else:
+            final.append(chunk)
+
+    # Split oversized chunks at paragraph boundaries
+    refined = []
+    for chunk in final:
+        if len(chunk) <= max_chars:
+            refined.append(chunk)
+        else:
+            paras = chunk.split("\n\n")
+            sub_chunk = []
+            for para in paras:
+                para = para.strip()
+                if not para:
+                    continue
+                if len("\n\n".join(sub_chunk + [para])) > max_chars and sub_chunk:
+                    refined.append("\n\n".join(sub_chunk))
+                    sub_chunk = [para]
+                else:
+                    sub_chunk.append(para)
+            if sub_chunk:
+                refined.append("\n\n".join(sub_chunk))
+
+    return [Chunk(number=i + 1, content=c) for i, c in enumerate(refined)]
+
 
 # In-memory cache for fetched URLs: {url: raw_content}
 _url_cache: dict[str, str] = {}
@@ -81,7 +171,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "web_get",
-            "description": "Fetch and process content from URLs using Jina Reader. Automatically converts PDFs, HTML to clean markdown. Supports multiple URLs in parallel. When get_full is false (default), content is processed via LLM summarizer using the provided instructions to extract/summarize specific information. When get_full is true, returns the raw page content without any filtering.",
+            "description": "Fetch and process content from URLs using Jina Reader. Automatically converts PDFs, HTML to clean markdown. Supports multiple URLs in parallel. Three modes: (1) get_full=true: raw page content, (2) use_chunks=true: smart chunk selection - splits page into chunks, LLM picks relevant ones, preserves original text (cheaper, no info loss), (3) default: LLM summarizes based on instructions.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -94,11 +184,16 @@ TOOLS = [
                     },
                     "instructions": {
                         "type": "string",
-                        "description": "Custom prompt guiding the LLM summarizer on what to look for. Make instructions explicit, self-contained, and dense—general for broad overviews or specific for targeted details. This helps chain crawls: If the summary lists next URLs, you can browse those next. Always keep requests focused to avoid vague outputs. Only used when get_full is false.",
+                        "description": "Custom prompt guiding the LLM summarizer on what to look for. Make instructions explicit, self-contained, and dense. Only used when get_full=false and use_chunks=false.",
                     },
                     "get_full": {
                         "type": "boolean",
-                        "description": "If true, returns the full page content without LLM processing. If false (default), content is summarized/extracted based on instructions.",
+                        "description": "If true, returns the full page content without LLM processing.",
+                        "default": False,
+                    },
+                    "use_chunks": {
+                        "type": "boolean",
+                        "description": "If true, splits page into logical chunks, asks LLM for relevant chunk numbers, and returns only those chunks. Preserves original text, cheaper than summarization. Good for detailed research.",
                         "default": False,
                     },
                 },
@@ -297,6 +392,7 @@ async def web_get(
     verbose: bool = False,
     instructions: str = "",
     get_full: bool = False,
+    use_chunks: bool = False,
     llm_client: AsyncOpenAI | None = None,
     llm_model: str | None = None,
     query: str = "",
@@ -304,18 +400,26 @@ async def web_get(
     url_numbers: dict[str, int] | None = None,
     url_titles: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Fetch and extract content from URLs using Jina Reader + LLM summarizer.
+    """Fetch and extract content from URLs using Jina Reader + LLM.
+
+    Three modes:
+    - get_full=True: Return raw content without processing
+    - use_chunks=True: Split into chunks, LLM picks relevant ones, return selected chunks
+    - default: LLM summarizes based on instructions
 
     Args:
         urls: List of URLs to fetch (1-8)
         jina_key: Jina AI API key
         verbose: Show detailed logs
-        instructions: Custom prompt for LLM extraction (used when get_full=False)
+        instructions: Custom prompt for LLM extraction (used when get_full=False, use_chunks=False)
         get_full: If True, return raw content without LLM processing
-        llm_client: OpenAI client for LLM extraction (required when get_full=False)
-        llm_model: Model name for LLM extraction (required when get_full=False)
-        query: Original search query for extraction context
+        use_chunks: If True, use chunk-based selection instead of summarization
+        llm_client: OpenAI client for LLM processing
+        llm_model: Model name for LLM processing
+        query: Original search query for context
         timeout: Timeout in seconds for API calls (default: 30)
+        url_numbers: URL -> citation number mapping
+        url_titles: URL -> title mapping
 
     Returns:
         Dictionary with page contents, formatted as [link]\n---\n[content]
@@ -324,7 +428,9 @@ async def web_get(
 
     if verbose:
         print(f"[Jina Reader] Starting {len(urls)} parallel fetches...")
-        if not get_full:
+        if use_chunks:
+            print(f"[Jina Reader] Chunk-based selection enabled (model: {llm_model})")
+        elif not get_full:
             print(f"[Jina Reader] LLM extraction enabled (model: {llm_model})")
 
     client = get_http_client(timeout=float(timeout))
@@ -372,10 +478,57 @@ async def web_get(
             raw_content = _url_cache[url]
             cached_urls_with_content.append((url, raw_content))
 
-    # Parallel LLM extraction for all URLs (fetched + cached)
+    # Parallel LLM processing for all URLs (fetched + cached)
     all_urls_with_content = fetched_urls_with_content + cached_urls_with_content
 
-    if all_urls_with_content and not get_full and llm_client and llm_model:
+    if use_chunks and all_urls_with_content and llm_client and llm_model:
+        # Chunk-based selection mode
+        if verbose:
+            print(f"[Jina Reader] Running chunk selection for {len(all_urls_with_content)} URLs...")
+
+        # Create chunk selection tasks
+        chunk_tasks = []
+        for url, raw_content in all_urls_with_content:
+            task = _select_chunks_with_llm(
+                llm_client,
+                llm_model,
+                raw_content,
+                query,
+                verbose,
+            )
+            chunk_tasks.append((url, task))
+
+        # Execute all chunk selections in parallel
+        chunk_results = await asyncio.gather(
+            *[task for _, task in chunk_tasks], return_exceptions=True
+        )
+
+        # Build contents list with selected chunks
+        for (url, _), result in zip(chunk_tasks, chunk_results):
+            if isinstance(result, Exception):
+                error_msg = str(result)
+                if verbose:
+                    print(f"  [Jina Reader] ❌ Chunk selection error for {url}: {error_msg}")
+                contents.append(
+                    {
+                        "url": url,
+                        "error": error_msg,
+                        "content": "",
+                    }
+                )
+            else:
+                citation_num = url_numbers.get(url) if url_numbers else None
+                if citation_num:
+                    formatted_content = f"[{citation_num}] {url}\n---\n{result}"
+                else:
+                    formatted_content = f"{url}\n---\n{result}"
+                contents.append(
+                    {
+                        "url": url,
+                        "content": formatted_content,
+                    }
+                )
+    elif all_urls_with_content and not get_full and llm_client and llm_model:
         if verbose:
             print(
                 f"[Jina Reader] Running parallel LLM extraction for {len(all_urls_with_content)} URLs..."
@@ -467,6 +620,129 @@ def _generate_sources_list(
         else:
             lines.append(f"[{num}] {url}")
     return "\n".join(lines)
+
+
+async def _select_chunks_with_llm(
+    client: AsyncOpenAI,
+    model: str,
+    content: str,
+    query: str,
+    verbose: bool = False,
+) -> str:
+    """Select relevant chunks from content using LLM.
+
+    Splits content into logical chunks, asks LLM which chunks are relevant,
+    and returns only the selected chunks.
+
+    Args:
+        client: OpenAI client
+        model: Model name
+        content: Raw page content
+        query: Original search query
+        verbose: Show detailed logs
+
+    Returns:
+        Selected chunks concatenated together
+    """
+    # Split content into logical chunks
+    chunks = create_logical_chunks(content)
+
+    if not chunks:
+        return content
+
+    if verbose:
+        print(f"  [Chunk Selector] Split into {len(chunks)} chunks")
+
+    # Build the prompt with chunks
+    system_prompt = CHUNK_SELECTOR_PROMPT.format(query=query)
+
+    # Format chunks for the prompt
+    chunks_text = []
+    for chunk in chunks:
+        chunks_text.append(f"[CHUNK {chunk.number}] {chunk.content}")
+
+    user_content = "\n\n".join(chunks_text)
+
+    try:
+        response = await client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
+            ],
+            max_tokens=100,  # We only need a few numbers
+        )
+
+        llm_response = response.choices[0].message.content or ""
+        llm_response = llm_response.strip().lower()
+
+        if verbose:
+            print(f"  [Chunk Selector] LLM response: {llm_response}")
+
+        # Parse the response - extract numbers
+        if llm_response == "none" or llm_response == "n/a" or llm_response == "null":
+            if verbose:
+                print("  [Chunk Selector] No relevant chunks found")
+            return ""
+
+        # Extract ALL numbers from response using regex
+        # Handles: "3, 7, 12", "3,7,12", "3 7 12", "chunks 3 and 7", etc.
+        import re as re_module
+
+        all_numbers = re_module.findall(r"\d+", llm_response)
+
+        if not all_numbers:
+            if verbose:
+                print("  [Chunk Selector] No numbers found in response")
+            return ""
+
+        # Filter to valid chunk numbers (1-indexed, within range)
+        max_chunk = len(chunks)
+        selected_nums: set[int] = set()
+        rejected_nums: list[int] = []
+
+        for n_str in all_numbers:
+            n = int(n_str)
+            if 1 <= n <= max_chunk:
+                selected_nums.add(n)
+            else:
+                rejected_nums.append(n)
+
+        if rejected_nums and verbose:
+            print(
+                f"  [Chunk Selector] Ignoring out-of-range numbers: {rejected_nums} (valid: 1-{max_chunk})"
+            )
+
+        if not selected_nums:
+            if verbose:
+                print("  [Chunk Selector] No valid chunk numbers found")
+            return ""
+
+        if verbose:
+            print(f"  [Chunk Selector] Selected chunks: {sorted(selected_nums)}")
+
+        # Get selected chunks
+        selected_chunks = [chunks[n - 1] for n in sorted(selected_nums)]
+
+        # Return concatenated content
+        result = "\n\n---\n\n".join(c.content for c in selected_chunks)
+
+        if verbose:
+            print(
+                f"  [Chunk Selector] Returning {len(selected_chunks)} chunks ({len(result)} chars)"
+            )
+
+        return result
+
+    except Exception as e:
+        if verbose:
+            print(f"  [Chunk Selector] ❌ ERROR: {e}")
+        # Fallback: return first few chunks as best-effort
+        # This handles API failures, timeouts, etc. gracefully
+        fallback_count = min(5, len(chunks))
+        if verbose:
+            print(f"  [Chunk Selector] Falling back to first {fallback_count} chunks")
+        return "\n\n---\n\n".join(c.content for c in chunks[:fallback_count])
 
 
 async def _extract_with_llm(
@@ -620,12 +896,14 @@ async def execute_tool(
         urls = tool_args.get("urls", [])
         instructions = tool_args.get("instructions", "")
         get_full = tool_args.get("get_full", False)
+        use_chunks = tool_args.get("use_chunks", False)
         return await web_get(
             urls,
             jina_key,
             verbose,
             instructions,
             get_full,
+            use_chunks,
             llm_client,
             llm_model,
             query,
