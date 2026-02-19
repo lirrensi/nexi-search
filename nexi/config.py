@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import secrets
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -145,6 +145,11 @@ class Config:
     tokenizer_encoding: str = "cl100k_base"
     jina_timeout: int = 30
     llm_max_retries: int = 3
+
+    # Backend configuration
+    search_backend: str = "jina"
+    content_fetcher: str = "jina"
+    api_keys: dict[str, str] = field(default_factory=dict)  # {"jina": "key", "tavily": "key", ...}
 
     def to_dict(self) -> dict[str, Any]:
         """Convert config to dictionary."""

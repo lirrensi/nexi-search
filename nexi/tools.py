@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 import httpx
 from openai import AsyncOpenAI
@@ -100,6 +100,132 @@ def create_logical_chunks(md: str, target_chars: int = 480, max_chars: int = 720
     return [Chunk(number=i + 1, content=c) for i, c in enumerate(refined)]
 
 
+# ===== Backend Implementations =====
+
+
+class JinaSearchBackend:
+    """Jina AI search backend implementation."""
+
+    async def search(
+        self,
+        queries: list[str],
+        api_key: str,
+        timeout: float,
+        verbose: bool,
+    ) -> dict[str, Any]:
+        """Execute search via Jina AI."""
+        results = []
+
+        if verbose:
+            print(f"[Jina Search] Starting {len(queries)} parallel searches...")
+
+        client = get_http_client(timeout=timeout)
+
+        # Create tasks for parallel execution
+        tasks = []
+        for query in queries:
+            task = _search_single(client, query, api_key, verbose)
+            tasks.append(task)
+
+        # Execute all searches in parallel
+        search_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for query, result in zip(queries, search_results):
+            if isinstance(result, Exception):
+                error_msg = str(result)
+                if verbose:
+                    print(f"  [Jina Search] Exception: {error_msg}")
+                results.append(
+                    {
+                        "query": query,
+                        "error": error_msg,
+                        "results": [],
+                    }
+                )
+            else:
+                results.append(result)
+
+        if verbose:
+            print(f"[Jina Search] Completed {len(results)} searches")
+
+        return {"searches": results}
+
+
+class JinaContentFetcher:
+    """Jina AI content fetcher backend implementation."""
+
+    async def fetch(
+        self,
+        urls: list[str],
+        api_key: str,
+        timeout: float,
+        verbose: bool,
+    ) -> dict[str, Any]:
+        """Fetch content via Jina Reader."""
+        contents = []
+
+        if verbose:
+            print(f"[Jina Reader] Starting {len(urls)} parallel fetches...")
+
+        client = get_http_client(timeout=timeout)
+
+        # Create tasks for parallel execution (only for URLs not in cache)
+        tasks = []
+        urls_to_fetch = []
+        for url in urls:
+            if url in _url_cache:
+                if verbose:
+                    print(f"  [Jina Reader] Cache hit for: {url}")
+            else:
+                urls_to_fetch.append(url)
+                task = _get_single(client, url, api_key, verbose)
+                tasks.append(task)
+
+        # Execute all fetches in parallel
+        fetch_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Process newly fetched URLs and update cache
+        fetched_urls_with_content = []
+        for url, result in zip(urls_to_fetch, fetch_results):
+            if isinstance(result, Exception):
+                error_msg = str(result)
+                if verbose:
+                    print(f"  [Jina Reader] Exception: {error_msg}")
+                contents.append(
+                    {
+                        "url": url,
+                        "error": error_msg,
+                        "content": "",
+                    }
+                )
+            else:
+                raw_content = result.get("content", "") if isinstance(result, dict) else ""
+                _url_cache[url] = raw_content
+                fetched_urls_with_content.append((url, raw_content))
+
+        # Process cached URLs
+        cached_urls_with_content = []
+        for url in urls:
+            if url in _url_cache and url not in urls_to_fetch:
+                raw_content = _url_cache[url]
+                cached_urls_with_content.append((url, raw_content))
+
+        # Build contents list from all URLs (fetched + cached)
+        all_urls_with_content = fetched_urls_with_content + cached_urls_with_content
+        for url, raw_content in all_urls_with_content:
+            contents.append(
+                {
+                    "url": url,
+                    "content": raw_content,
+                }
+            )
+
+        if verbose:
+            print(f"[Jina Reader] Completed {len(contents)} fetches")
+
+        return {"pages": contents}
+
+
 # In-memory cache for fetched URLs: {url: raw_content}
 _url_cache: dict[str, str] = {}
 
@@ -135,6 +261,63 @@ async def close_http_client() -> None:
     if _http_client is not None:
         await _http_client.aclose()
         _http_client = None
+
+
+# ===== Backend Protocols =====
+
+
+class SearchBackend(Protocol):
+    """Protocol for search backend implementations."""
+
+    async def search(
+        self,
+        queries: list[str],
+        api_key: str,
+        timeout: float,
+        verbose: bool,
+    ) -> dict[str, Any]:
+        """Execute search queries.
+
+        Args:
+            queries: List of search queries (1-5)
+            api_key: API key for the backend service
+            timeout: Request timeout in seconds
+            verbose: Show detailed logs
+
+        Returns:
+            Dict with key "searches": list[dict] where each dict has:
+            - "query": str
+            - "results": list[dict] with "title", "url", "description"
+            - "error": str (if failed)
+        """
+        ...
+
+
+class ContentFetcher(Protocol):
+    """Protocol for content fetcher implementations."""
+
+    async def fetch(
+        self,
+        urls: list[str],
+        api_key: str,
+        timeout: float,
+        verbose: bool,
+    ) -> dict[str, Any]:
+        """Fetch content from URLs.
+
+        Args:
+            urls: List of URLs to fetch (1-8)
+            api_key: API key for the backend service
+            timeout: Request timeout in seconds
+            verbose: Show detailed logs
+
+        Returns:
+            Dict with key "pages": list[dict] where each dict has:
+            - "url": str
+            - "content": str (markdown content)
+            - "error": str (if failed)
+        """
+        ...
 
 
 __all__ = [
@@ -224,52 +407,25 @@ TOOLS = [
 async def web_search(
     queries: list[str], jina_key: str, verbose: bool = False, timeout: int = 30
 ) -> dict[str, Any]:
-    """Search the web using Jina AI.
+    """Search the web using configurable search backend.
 
     Args:
         queries: List of search queries (1-5)
-        jina_key: Jina AI API key
+        jina_key: Jina AI API key (passed for backward compatibility)
         verbose: Show detailed logs
         timeout: Timeout in seconds for API calls (default: 30)
 
     Returns:
         Dictionary with search results
     """
-    results = []
-
-    if verbose:
-        print(f"[Jina Search] Starting {len(queries)} parallel searches...")
-
-    client = get_http_client(timeout=float(timeout))
-
-    # Create tasks for parallel execution
-    tasks = []
-    for query in queries:
-        task = _search_single(client, query, jina_key, verbose)
-        tasks.append(task)
-
-    # Execute all searches in parallel
-    search_results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    for query, result in zip(queries, search_results):
-        if isinstance(result, Exception):
-            error_msg = str(result)
-            if verbose:
-                print(f"  [Jina Search] ❌ Exception: {error_msg}")
-            results.append(
-                {
-                    "query": query,
-                    "error": error_msg,
-                    "results": [],
-                }
-            )
-        else:
-            results.append(result)
-
-    if verbose:
-        print(f"[Jina Search] Completed {len(results)} searches")
-
-    return {"searches": results}
+    # Use JinaSearchBackend (future: load based on config)
+    backend = JinaSearchBackend()
+    return await backend.search(
+        queries=queries,
+        api_key=jina_key,
+        timeout=float(timeout),
+        verbose=verbose,
+    )
 
 
 async def _search_single(
@@ -400,7 +556,7 @@ async def web_get(
     url_numbers: dict[str, int] | None = None,
     url_titles: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Fetch and extract content from URLs using Jina Reader + LLM.
+    """Fetch and extract content from URLs using configurable content fetcher + LLM.
 
     Three modes:
     - get_full=True: Return raw content without processing
@@ -409,7 +565,7 @@ async def web_get(
 
     Args:
         urls: List of URLs to fetch (1-8)
-        jina_key: Jina AI API key
+        jina_key: Jina AI API key (passed for backward compatibility)
         verbose: Show detailed logs
         instructions: Custom prompt for LLM extraction (used when get_full=False, use_chunks=False)
         get_full: If True, return raw content without LLM processing
@@ -424,7 +580,36 @@ async def web_get(
     Returns:
         Dictionary with page contents, formatted as [link]\n---\n[content]
     """
+    # Use JinaContentFetcher to get raw markdown (future: load based on config)
+    fetcher = JinaContentFetcher()
+    raw_result = await fetcher.fetch(
+        urls=urls,
+        api_key=jina_key,
+        timeout=float(timeout),
+        verbose=verbose,
+    )
+
+    # Build url -> content map from fetcher result
+    url_to_raw_content: dict[str, str] = {}
+    for page in raw_result.get("pages", []):
+        url_to_raw_content[page["url"]] = page.get("content", "")
+
+    # Get raw content for all URLs (from fetcher result)
+    all_urls_with_content = [
+        (url, url_to_raw_content.get(url, "")) for url in urls if url in url_to_raw_content
+    ]
+
+    # Initialize contents list with errors for URLs that failed to fetch
     contents = []
+    for page in raw_result.get("pages", []):
+        if "error" in page:
+            contents.append(
+                {
+                    "url": page["url"],
+                    "error": page["error"],
+                    "content": "",
+                }
+            )
 
     if verbose:
         print(f"[Jina Reader] Starting {len(urls)} parallel fetches...")
@@ -432,54 +617,6 @@ async def web_get(
             print(f"[Jina Reader] Chunk-based selection enabled (model: {llm_model})")
         elif not get_full:
             print(f"[Jina Reader] LLM extraction enabled (model: {llm_model})")
-
-    client = get_http_client(timeout=float(timeout))
-
-    # Create tasks for parallel execution (only for URLs not in cache)
-    tasks = []
-    urls_to_fetch = []
-    for url in urls:
-        if url in _url_cache:
-            if verbose:
-                print(f"  [Jina Reader] Cache hit for: {url}")
-            # Will process cached content later
-        else:
-            urls_to_fetch.append(url)
-            task = _get_single(client, url, jina_key, verbose)
-            tasks.append(task)
-
-    # Execute all fetches in parallel
-    fetch_results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    # Process newly fetched URLs and update cache
-    fetched_urls_with_content = []
-    for url, result in zip(urls_to_fetch, fetch_results):
-        if isinstance(result, Exception):
-            error_msg = str(result)
-            if verbose:
-                print(f"  [Jina Reader] ❌ Exception: {error_msg}")
-            contents.append(
-                {
-                    "url": url,
-                    "error": error_msg,
-                    "content": "",
-                }
-            )
-        else:
-            # Store raw content in cache
-            raw_content = result.get("content", "") if isinstance(result, dict) else ""
-            _url_cache[url] = raw_content
-            fetched_urls_with_content.append((url, raw_content))
-
-    # Process cached URLs
-    cached_urls_with_content = []
-    for url in urls:
-        if url in _url_cache and url not in urls_to_fetch:
-            raw_content = _url_cache[url]
-            cached_urls_with_content.append((url, raw_content))
-
-    # Parallel LLM processing for all URLs (fetched + cached)
-    all_urls_with_content = fetched_urls_with_content + cached_urls_with_content
 
     if use_chunks and all_urls_with_content and llm_client and llm_model:
         # Chunk-based selection mode

@@ -780,6 +780,32 @@ The search loop terminates when **any** of these conditions are met:
 3. Add execution logic in `execute_tool()`
 4. Handle tool call in search loop
 
+### Pluggable Backends
+
+NEXI supports swappable search backends and content fetchers:
+
+1. **SearchBackend Protocol** (`nexi/tools.py`):
+   - Implement `search(queries, api_key, timeout, verbose)` method
+   - Return `{"searches": [{"query": str, "results": [...], "error": str}]}`
+
+2. **ContentFetcher Protocol** (`nexi/tools.py`):
+   - Implement `fetch(urls, api_key, timeout, verbose)` method  
+   - Return `{"pages": [{"url": str, "content": str, "error": str}]}`
+
+3. **Backend Selection** (future):
+   - Configure via `config.search_backend` and `config.content_fetcher`
+   - Currently defaults to "jina" (JinaSearchBackend + JinaContentFetcher)
+
+Example future configuration:
+```python
+config = Config(
+    search_backend="tavily",
+    content_fetcher="jina",  # Keep Jina for fetch, swap search
+    api_keys={"tavily": "key123", "jina": "key456"},
+    ...
+)
+```
+
 ### Custom Prompts
 
 1. Edit `DEFAULT_SYSTEM_PROMPT_TEMPLATE` in `config.py`
