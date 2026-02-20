@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import pytest
-
 from nexi.citations import (
-    extract_citation_markers,
-    map_markers_to_urls,
-    format_citations_section,
     add_citations_to_answer,
-    process_answer_with_citations,
+    extract_citation_markers,
     extract_citations_from_tool_result,
+    format_citations_section,
+    map_markers_to_urls,
+    process_answer_with_citations,
 )
 
 

@@ -128,10 +128,9 @@ def main(
     # Get query from argument or option or stdin
     search_query = query or query_text
 
-    if not search_query:
-        # Check if stdin has data
-        if not sys.stdin.isatty():
-            search_query = sys.stdin.read().strip()
+    # Check if stdin has data
+    if not search_query and not sys.stdin.isatty():
+        search_query = sys.stdin.read().strip()
 
     if not search_query:
         # Enter interactive mode

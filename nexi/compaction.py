@@ -135,7 +135,7 @@ async def generate_summary(
             messages=[
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": content},
-            ]
+            ],
         )
 
         summary = response.choices[0].message.content or ""

@@ -504,7 +504,7 @@ async def run_search(
                 if "<tool call" in content or "<function_calls>" in content:
                     # Model misbehaved - returning tool call text instead of using tools
                     if verbose:
-                        print(f"[Warning] Model returned tool call text instead of using tools")
+                        print("[Warning] Model returned tool call text instead of using tools")
                     # Try to extract actual answer content after tool call markers
                     lines_list = content.split(chr(10))
                     answer_lines = []

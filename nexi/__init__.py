@@ -1,6 +1,6 @@
 """NEXI - Intelligent web search CLI tool."""
 
-__version__ = "0.1.0"
+__version__ = "0.4.1"
 
 from nexi.config import (
     DEFAULT_SYSTEM_PROMPT_TEMPLATE,
@@ -97,8 +97,8 @@ __all__ = [
 
 # MCP server (optional import)
 try:
-    from nexi.mcp_server import mcp, nexi_search
-    from nexi.mcp_server import run as run_mcp_server
+    from nexi.mcp_server import mcp, nexi_search  # noqa: F401
+    from nexi.mcp_server import run as run_mcp_server  # noqa: F401
 
     __all__.extend(["mcp", "nexi_search", "run_mcp_server"])
 except ImportError:

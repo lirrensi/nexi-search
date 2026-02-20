@@ -9,5 +9,18 @@ wheels/
 # Virtual environments
 .venv
 .tmp
+
+# IDE/editor debris
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS debris
+.DS_Store
+Thumbs.db
+
+# Private/planning (keep out of repo)
 private/
 plans/

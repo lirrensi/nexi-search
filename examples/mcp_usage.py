@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 
-try:
-    from fastmcp import FastMCP
-except ImportError:
+if importlib.util.find_spec("fastmcp") is None:
     print("fastmcp is required. Install with: pip install fastmcp")
     exit(1)
 
@@ -38,7 +37,7 @@ async def example_usage():
         query="Explain quantum computing in simple terms",
         effort="l",
         max_iter=8,
-        max_timeout=180,
+        time_target=180,
         verbose=True,
     )
     print(result)
@@ -50,7 +49,7 @@ async def example_usage():
     result = nexi_search(
         query="Latest developments in AI",
         effort="m",
-        max_timeout=60,
+        time_target=60,
         verbose=False,
     )
     print(result)

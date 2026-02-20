@@ -39,11 +39,11 @@ def test_get_console():
 def test_set_plain_mode():
     """Test set_plain_mode changes console."""
     set_plain_mode(True)
-    console = get_console()
+    get_console()
     # Console should be recreated
 
     set_plain_mode(False)
-    console2 = get_console()
+    get_console()
     # Should be different instance
 
 

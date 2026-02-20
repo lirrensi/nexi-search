@@ -184,9 +184,9 @@ def validate_config(config: dict[str, Any]) -> tuple[bool, list[str]]:
         "default_effort",
         "max_output_tokens",
     ]
-    for field in required:
-        if field not in config:
-            errors.append(f"Missing required field: {field}")
+    for field_name in required:
+        if field_name not in config:
+            errors.append(f"Missing required field: {field_name}")
 
     if errors:
         return False, errors
@@ -223,9 +223,8 @@ def validate_config(config: dict[str, Any]) -> tuple[bool, list[str]]:
 
     # Validate max_context (optional)
     max_context = config.get("max_context")
-    if max_context is not None:
-        if not isinstance(max_context, int) or max_context <= 0:
-            errors.append("max_context must be a positive integer")
+    if max_context is not None and (not isinstance(max_context, int) or max_context <= 0):
+        errors.append("max_context must be a positive integer")
 
     # Validate auto_compact_thresh (optional)
     auto_compact_thresh = config.get("auto_compact_thresh")
@@ -237,33 +236,36 @@ def validate_config(config: dict[str, Any]) -> tuple[bool, list[str]]:
 
     # Validate compact_target_words (optional)
     compact_target_words = config.get("compact_target_words")
-    if compact_target_words is not None:
-        if not isinstance(compact_target_words, int) or compact_target_words <= 0:
-            errors.append("compact_target_words must be a positive integer")
+    if compact_target_words is not None and (
+        not isinstance(compact_target_words, int) or compact_target_words <= 0
+    ):
+        errors.append("compact_target_words must be a positive integer")
 
     # Validate preserve_last_n_messages (optional)
     preserve_last_n = config.get("preserve_last_n_messages")
-    if preserve_last_n is not None:
-        if not isinstance(preserve_last_n, int) or preserve_last_n < 0:
-            errors.append("preserve_last_n_messages must be a non-negative integer")
+    if preserve_last_n is not None and (
+        not isinstance(preserve_last_n, int) or preserve_last_n < 0
+    ):
+        errors.append("preserve_last_n_messages must be a non-negative integer")
 
     # Validate tokenizer_encoding (optional)
     tokenizer_encoding = config.get("tokenizer_encoding")
-    if tokenizer_encoding is not None:
-        if not isinstance(tokenizer_encoding, str) or not tokenizer_encoding.strip():
-            errors.append("tokenizer_encoding must be a non-empty string")
+    if tokenizer_encoding is not None and (
+        not isinstance(tokenizer_encoding, str) or not tokenizer_encoding.strip()
+    ):
+        errors.append("tokenizer_encoding must be a non-empty string")
 
     # Validate jina_timeout (optional)
     jina_timeout = config.get("jina_timeout")
-    if jina_timeout is not None:
-        if not isinstance(jina_timeout, int) or jina_timeout <= 0:
-            errors.append("jina_timeout must be a positive integer")
+    if jina_timeout is not None and (not isinstance(jina_timeout, int) or jina_timeout <= 0):
+        errors.append("jina_timeout must be a positive integer")
 
     # Validate llm_max_retries (optional)
     llm_max_retries = config.get("llm_max_retries")
-    if llm_max_retries is not None:
-        if not isinstance(llm_max_retries, int) or llm_max_retries <= 0:
-            errors.append("llm_max_retries must be a positive integer")
+    if llm_max_retries is not None and (
+        not isinstance(llm_max_retries, int) or llm_max_retries <= 0
+    ):
+        errors.append("llm_max_retries must be a positive integer")
 
     return len(errors) == 0, errors
 

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 try:
     from fastmcp import FastMCP
-except ImportError:
+except ImportError as err:
     raise ImportError(
         "fastmcp is required to run the MCP server. Install it with: pip install fastmcp"
-    )
+    ) from err
 
 from nexi.config import Config, ensure_config
 from nexi.search import run_search_sync

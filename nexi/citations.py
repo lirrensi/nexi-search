@@ -169,10 +169,9 @@ def _detect_referenced_urls(text: str, urls: list[str]) -> set[str]:
 
         # 3. Just domain
         domain = url_lower.split("/")[0]
-        if domain in text_lower:
-            # Only add if it's not a common word
-            if not _is_common_word(domain):
-                referenced.add(url)
+        # Only add if it's not a common word
+        if domain in text_lower and not _is_common_word(domain):
+            referenced.add(url)
 
     return referenced
 

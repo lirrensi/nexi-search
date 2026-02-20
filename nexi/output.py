@@ -8,7 +8,7 @@ from collections.abc import Callable
 from rich.console import Console
 from rich.markdown import Markdown
 
-from nexi.citations import process_answer_with_citations, format_citations_section
+from nexi.citations import format_citations_section, process_answer_with_citations
 
 # Global console instance
 _console: Console | None = None
@@ -213,15 +213,9 @@ def format_context_size(current: int, max_: int) -> str:
     max_k = max_ / 1000
 
     # Format with 1 decimal place if needed, otherwise integer
-    if current_k == int(current_k):
-        current_str = f"{int(current_k)}k"
-    else:
-        current_str = f"{current_k:.1f}k"
+    current_str = f"{int(current_k)}k" if current_k == int(current_k) else f"{current_k:.1f}k"
 
-    if max_k == int(max_k):
-        max_str = f"{int(max_k)}k"
-    else:
-        max_str = f"{max_k:.1f}k"
+    max_str = f"{int(max_k)}k" if max_k == int(max_k) else f"{max_k:.1f}k"
 
     return f"{current_str}/{max_str}"
 

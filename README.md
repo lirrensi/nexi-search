@@ -4,38 +4,59 @@
 
 ![NEXI](https://raw.githubusercontent.com/lirrensi/nexi-search/main/img/nexi.jpg)
 
-## Why?
+---
 
-- **Quick console search** - pipe it, script it, whatever
-- **Offload from your coding agent** - no MCPs needed, just point your agent at a CLI tool. Manually type queries to get context without polluting it with bullshit
-- **Cheaper models** - use flash-lite instead of burning your rate limits on search
+## Why NEXI Exists
 
-Searches can take 1-2 minutes for deep research. It's a smol CLI tool vibecoded in 2hrs.
+You have questions. The web has answers. But getting from A to B shouldn't require:
 
-## Install
+- A browser tab you'll forget to close
+- A $20/month subscription to a search product
+- Your coding agent's precious context window filled with search noise
+
+**NEXI is for people who live in the terminal.**
+
+It's the search tool you pipe, script, and forget. Point your agents at it, or just type a query and get an answer with sources. No MCP dance required — just a CLI that works.
+
+### The Problem with AI Search Today
+
+| Pain Point | How NEXI Helps |
+|------------|----------------|
+| Perplexity et al. are expensive | Use any OpenAI-compatible API, including cheap models |
+| Web search pollutes your agent's context | Offload searches to a dedicated tool, get summarized results |
+| Browser tabs multiply like rabbits | Stay in your terminal, pipe to files, script away |
+| "AI search" is a black box | `--verbose` shows every LLM call, token, and decision |
+
+### Philosophy
+
+- **Own your tools.** Your API keys, your models, your data.
+- **Stay minimal.** Vibecoded in 2 hours. No bloat.
+- **Be transparent.** Every decision is visible if you want to see it.
+- **Respect the workflow.** CLI-first, pipe-friendly, script-ready.
+
+> *Searches take 1-2 minutes for deep research. That's the cost of thoroughness. Go make tea.*
+
+---
+
+## Quick Start
 
 ```bash
-# uv (recommended)
+# Install
 uv tool install git+https://github.com/lirrensi/nexi-search.git
 
-# pipx
-pipx install git+https://github.com/lirrensi/nexi-search.git
+# Run (first time = interactive config)
+nexi "what is the deal with rust async traits"
 ```
 
-## Setup
+**You'll need:**
+- An OpenAI-compatible API (OpenRouter, OpenAI, local, etc.)
+- A Jina AI API key — **free** at [jina.ai](https://jina.ai)
 
-```bash
-nexi  # interactive config on first run
-```
+---
 
-Needs:
-- OpenAI-compatible API endpoint + key + model
-- Jina AI API key (free at https://jina.ai)
+## Configuration
 
-### Config File
-
-Located at:
-- `~/.local/share/nexi/config.json`
+Config lives at `~/.local/share/nexi/config.json`. Edit with `nexi --edit-config` or:
 
 ```json
 {
@@ -54,8 +75,6 @@ Located at:
 }
 ```
 
-Edit with `nexi --edit-config` or just open the file.
-
 ### Context Management (Auto-Compact)
 
 NEXI automatically manages conversation context to prevent token overflow during long searches:
@@ -73,6 +92,8 @@ When approaching context limits, NEXI:
 4. Continues search without losing important information
 
 Use `--verbose` to see token counts and compaction details.
+
+---
 
 ## Usage
 
@@ -126,6 +147,8 @@ nexi --verbose "see all the LLM calls"
 | `m` | Balanced (16 iterations) | Most queries |
 | `l` | Deep research (32 iterations) | Complex topics |
 
+---
+
 ## Troubleshooting
 
 | Issue | Fix |
@@ -134,6 +157,8 @@ nexi --verbose "see all the LLM calls"
 | 429 Rate Limit | Wait or switch to different/cheaper model |
 | Time target hit | Increase `time_target` or use `--time-target` |
 | UTF-8 garbled (Windows) | Use `--plain` or Windows Terminal |
+
+---
 
 ## MCP Server
 
@@ -202,7 +227,9 @@ For HTTP transport:
 }
 ```
 
-See [MCP_SERVER.md](MCP_SERVER.md) for more details.
+See [MCP_SERVER.md](docs/MCP_SERVER.md) for more details.
+
+---
 
 ## License
 

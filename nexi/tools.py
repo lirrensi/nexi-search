@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import re
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -130,7 +131,7 @@ class JinaSearchBackend:
         # Execute all searches in parallel
         search_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        for query, result in zip(queries, search_results):
+        for query, result in zip(queries, search_results, strict=False):
             if isinstance(result, Exception):
                 error_msg = str(result)
                 if verbose:
@@ -186,7 +187,7 @@ class JinaContentFetcher:
 
         # Process newly fetched URLs and update cache
         fetched_urls_with_content = []
-        for url, result in zip(urls_to_fetch, fetch_results):
+        for url, result in zip(urls_to_fetch, fetch_results, strict=False):
             if isinstance(result, Exception):
                 error_msg = str(result)
                 if verbose:
@@ -531,10 +532,8 @@ async def _search_single(
             print(f"  [Jina Search] ❌ ERROR: {error_msg}")
             # Try to show raw response if available
             if response:
-                try:
+                with contextlib.suppress(BaseException):
                     print(f"  [Jina Search] Raw response: {response.text[:500]}")
-                except:
-                    pass
         return {
             "query": query,
             "error": error_msg,
@@ -641,7 +640,7 @@ async def web_get(
         )
 
         # Build contents list with selected chunks
-        for (url, _), result in zip(chunk_tasks, chunk_results):
+        for (url, _), result in zip(chunk_tasks, chunk_results, strict=False):
             if isinstance(result, Exception):
                 error_msg = str(result)
                 if verbose:
@@ -690,7 +689,7 @@ async def web_get(
         )
 
         # Build contents list with extracted content
-        for (url, _), result in zip(extraction_tasks, extraction_results):
+        for (url, _), result in zip(extraction_tasks, extraction_results, strict=False):
             if isinstance(result, Exception):
                 error_msg = str(result)
                 if verbose:
@@ -986,10 +985,8 @@ async def _get_single(
         if verbose:
             print(f"  [Jina Reader] ❌ ERROR: {error_msg}")
             if response:
-                try:
+                with contextlib.suppress(BaseException):
                     print(f"  [Jina Reader] Raw response: {response.text[:500]}")
-                except:
-                    pass
         return {
             "url": url,
             "error": error_msg,
