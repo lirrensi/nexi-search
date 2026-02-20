@@ -114,6 +114,7 @@ async def run_search(
     time_target: int | None = None,
     verbose: bool = False,
     progress_callback: ProgressCallback | None = None,
+    initial_messages: list[dict[str, Any]] | None = None,
 ) -> SearchResult:
     """Run agentic search loop.
 
@@ -158,10 +159,15 @@ async def run_search(
     )
 
     # Initialize conversation
-    messages: list[dict[str, Any]] = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": query},
-    ]
+    if initial_messages is not None:
+        messages: list[dict[str, Any]] = initial_messages.copy()
+        # Append the new user query
+        messages.append({"role": "user", "content": query})
+    else:
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": query},
+        ]
 
     # Track state
     urls_fetched: set[str] = set()
@@ -595,6 +601,7 @@ def run_search_sync(
     time_target: int | None = None,
     verbose: bool = False,
     progress_callback: ProgressCallback | None = None,
+    initial_messages: list[dict[str, Any]] | None = None,
 ) -> SearchResult:
     """Synchronous wrapper for run_search.
 
@@ -606,6 +613,7 @@ def run_search_sync(
         time_target: Optional time limit in seconds (None = no limit)
         verbose: Show detailed progress
         progress_callback: Called with (message, iteration, total)
+        initial_messages: Optional conversation history for multi-turn
 
     Returns:
         SearchResult with answer and metadata
@@ -623,6 +631,7 @@ def run_search_sync(
                 time_target=time_target,
                 verbose=verbose,
                 progress_callback=progress_callback,
+                initial_messages=initial_messages,
             )
         )
     finally:

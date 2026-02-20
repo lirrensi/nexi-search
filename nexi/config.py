@@ -86,6 +86,8 @@ Guidelines:
 Always respond with a tool call.
 """
 
+CONTINUATION_SYSTEM_PROMPT = """You are a helpful research assistant. The user is asking a follow-up question after a previous search. You have access to the conversation history. Continue the research naturally, using previous context where relevant. Use the web_search, web_get, and final_answer tools as needed."""
+
 CHUNK_SELECTOR_PROMPT = """You are a precise content selector.
 
 TASK: Given the query "{query}", identify which chunks contain relevant information.

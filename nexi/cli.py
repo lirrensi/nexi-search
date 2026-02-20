@@ -5,10 +5,12 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 import click
 
 from nexi.config import (
+    CONTINUATION_SYSTEM_PROMPT,
     Config,
     ensure_config,
     get_config_path,
@@ -156,8 +158,23 @@ def _run_search_command(
     time_target: int | None,
     verbose: bool,
     plain: bool,
-) -> None:
-    """Execute a search command."""
+    initial_messages: list[dict[str, Any]] | None = None,
+) -> str:
+    """Execute a search command.
+
+    Args:
+        query: Search query
+        effort: Effort level override
+        max_len: Max output tokens override
+        max_iter: Max iterations override
+        time_target: Time target override
+        verbose: Show verbose output
+        plain: Use plain output mode
+        initial_messages: Optional conversation history for multi-turn
+
+    Returns:
+        The answer string from the search result
+    """
     # Load config
     try:
         config = ensure_config()
@@ -202,6 +219,7 @@ def _run_search_command(
             time_target=time_target,
             verbose=verbose,
             progress_callback=progress_callback,  # type: ignore[arg-type]
+            initial_messages=initial_messages,
         )
 
         # Print compact summary before answer in compact mode
@@ -235,11 +253,14 @@ def _run_search_command(
         )
         add_history_entry(entry)
 
+        return result.answer
+
     except KeyboardInterrupt:
         print_warning("\\nSearch cancelled")
         sys.exit(130)
     except Exception as e:
         handle_error(f"Search failed: {e}", verbose=verbose)
+        return ""
 
 
 def _show_last_n(n: int, plain: bool) -> None:
@@ -280,12 +301,12 @@ def _show_by_id(entry_id: str, plain: bool) -> None:
 
 
 def _interactive_mode() -> None:
-    """Run interactive mode (REPL)."""
+    """Run interactive mode (REPL) with multi-turn support."""
     import questionary
 
-    # Load config
+    # Load config (ensures config exists and is valid)
     try:
-        config = ensure_config()
+        ensure_config()
     except Exception as e:
         print_error(f"Failed to load config: {e}")
         sys.exit(1)
@@ -303,6 +324,10 @@ def _interactive_mode() -> None:
     print_success("Welcome to NEXI interactive mode!")
     print("Type 'exit' or press Ctrl+C to quit\n")
 
+    # Track conversation for multi-turn
+    conversation_history: list[dict[str, Any]] = []
+    is_first_turn = True
+
     while True:
         try:
             query = questionary.text("🔍 nexi>").ask()
@@ -315,8 +340,17 @@ def _interactive_mode() -> None:
                 click.echo("Commands: exit, quit, q, help, h")
                 continue
 
-            # Run search
-            _run_search_command(
+            # Build initial_messages for this turn
+            if is_first_turn:
+                initial_messages = None
+            else:
+                # Use continuation prompt and include history
+                initial_messages = [
+                    {"role": "system", "content": CONTINUATION_SYSTEM_PROMPT},
+                ] + conversation_history.copy()
+
+            # Run search and capture answer
+            answer = _run_search_command(
                 query=query,
                 effort=None,
                 max_len=None,
@@ -324,7 +358,17 @@ def _interactive_mode() -> None:
                 time_target=None,
                 verbose=True,  # Enable verbose mode in interactive mode for better progress info
                 plain=False,
+                initial_messages=initial_messages,
             )
+
+            # Update conversation history for next turn
+            # Add the user query
+            conversation_history.append({"role": "user", "content": query})
+            # Add the assistant response
+            conversation_history.append({"role": "assistant", "content": answer})
+
+            # Mark that we're in continuation mode
+            is_first_turn = False
 
         except KeyboardInterrupt:
             print_success("\nBye bye~ 💕")
