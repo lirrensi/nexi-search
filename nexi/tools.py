@@ -201,7 +201,10 @@ class JinaContentFetcher:
                 )
             else:
                 raw_content = result.get("content", "") if isinstance(result, dict) else ""
-                _url_cache[url] = raw_content
+                # Only cache successful fetches with non-empty content
+                # Don't poison cache with transient failures
+                if raw_content and "error" not in (result if isinstance(result, dict) else {}):
+                    _url_cache[url] = raw_content
                 fetched_urls_with_content.append((url, raw_content))
 
         # Process cached URLs
@@ -821,11 +824,16 @@ async def _select_chunks_with_llm(
                 print("  [Chunk Selector] No relevant chunks found")
             return ""
 
-        # Extract ALL numbers from response using regex
-        # Handles: "3, 7, 12", "3,7,12", "3 7 12", "chunks 3 and 7", etc.
+        # Extract chunk numbers, being careful to avoid count numbers
+        # E.g., "I found 3 chunks: 1, 4, 7" should give [1, 4, 7], not [3, 1, 4, 7]
         import re as re_module
 
-        all_numbers = re_module.findall(r"\d+", llm_response)
+        # If response has a colon, only take numbers after it (the actual chunk list)
+        if ":" in llm_response:
+            after_colon = llm_response.split(":", 1)[1]
+            all_numbers = re_module.findall(r"\d+", after_colon)
+        else:
+            all_numbers = re_module.findall(r"\d+", llm_response)
 
         if not all_numbers:
             if verbose:

@@ -14,7 +14,7 @@ from openai import AsyncOpenAI
 from nexi.compaction import compact_conversation, should_compact
 from nexi.config import EFFORT_LEVELS, Config, get_system_prompt
 from nexi.token_counter import count_messages_tokens, estimate_page_tokens
-from nexi.tools import TOOLS, clear_url_cache, execute_tool
+from nexi.tools import TOOLS, clear_url_cache, close_http_client, execute_tool
 
 
 @dataclass
@@ -212,7 +212,7 @@ async def run_search(
         return "\n".join(lines)
 
     def update_tool_result_with_sources(result: dict[str, Any]) -> dict[str, Any]:
-        """Append current sources list to tool result content."""
+        """Append current sources list to tool result content (only on last page)."""
         # Only update web_get results
         if "pages" not in result:
             return result
@@ -221,16 +221,21 @@ async def run_search(
         if not sources_list:
             return result
 
-        # Update each page's content to include sources at the end
+        # Update only the last page's content to include sources
+        # This avoids duplicating the sources list across all pages in a batch
         updated_pages = []
-        for page in result.get("pages", []):
+        pages = result.get("pages", [])
+        for i, page in enumerate(pages):
             updated_page = page.copy()
             content = page.get("content", "")
             # Remove old sources section if present
             if "Sources:" in content:
                 content = content.split("Sources:")[0].rstrip()
-            # Add fresh sources list
-            updated_page["content"] = content + sources_list
+            # Add sources list only to the last page
+            if i == len(pages) - 1:
+                updated_page["content"] = content + sources_list
+            else:
+                updated_page["content"] = content
             updated_pages.append(updated_page)
 
         return {"pages": updated_pages}
@@ -335,7 +340,13 @@ async def run_search(
             if message.tool_calls:
                 tool_call = message.tool_calls[0]
                 tool_name = tool_call.function.name
-                tool_args = json.loads(tool_call.function.arguments)
+                # Parse tool arguments with fallback for malformed JSON
+                try:
+                    tool_args = json.loads(tool_call.function.arguments)
+                except json.JSONDecodeError:
+                    if verbose:
+                        print("[Warning] Malformed tool arguments, using empty dict")
+                    tool_args = {}
 
                 if verbose:
                     report_progress(f"Tool: {tool_name} | Args: {tool_args}", current_iteration)
@@ -635,4 +646,6 @@ def run_search_sync(
             )
         )
     finally:
+        # Close HTTP client to release connections
+        loop.run_until_complete(close_http_client())
         loop.close()

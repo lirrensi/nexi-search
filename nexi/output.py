@@ -356,7 +356,7 @@ def create_progress_callback(
     Args:
         verbose: Show detailed progress
         plain: Force plain mode
-        compact: Use compact mode (track iterations silently, print summary at end)
+        compact: Use compact mode (print iteration numbers to stderr in real-time)
 
     Returns:
         Tuple of (callback function, tracker instance or None)
@@ -371,12 +371,15 @@ def create_progress_callback(
         urls: list[str] | None = None,
     ) -> None:
         if compact and tracker:
-            # In compact mode, track iterations silently
-            if iteration > 0:
+            # In compact mode, print iteration numbers to stderr in real-time
+            if iteration > 0 and iteration not in tracker.iterations:
                 tracker.add_iteration(iteration)
-            # Track errors
+                # Print to stderr so it doesn't corrupt piped stdout
+                print(f"[{iteration}]", end="", file=sys.stderr, flush=True)
+            # Track errors (still print to stderr)
             if "error" in message.lower() or "timeout" in message.lower():
                 tracker.add_error(message)
+                print(f"\n[error: {message}]", file=sys.stderr, flush=True)
         elif verbose:
             print(f"[{iteration}/{total}] {message}")
         else:

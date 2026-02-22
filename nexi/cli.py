@@ -221,11 +221,9 @@ def _run_search_command(
             initial_messages=initial_messages,
         )
 
-        # Print compact summary before answer in compact mode
-        if compact and tracker:
-            summary = tracker.get_summary()
-            if summary:
-                print(summary)
+        # Print newline after compact progress indicators (to stderr)
+        if compact:
+            print(file=sys.stderr)  # End the [1][2][3] line
 
         # Print answer with citations
         print_answer(result.answer, plain, result.url_citations, result.url_to_title)

@@ -1,119 +1,63 @@
 ---
 name: nexi-search
-description: Guide for using NEXI - the self-hosted LLM-powered web search CLI. Use when users need help running searches, understanding effort levels, using history commands, piping output, or troubleshooting Nexi. Assumes Nexi is already installed; see references/installation.md for install details.
+description: Web search CLI that uses LLMs to search, read pages, and synthesize answers with citations. Use when you need current information from the web - news, documentation, recent events, or any topic requiring up-to-date sources. Invoke with `nexi --plain "query"` for programmatic use.
 ---
 
-# NEXI Usage Guide
+# NEXI for Agents
 
-NEXI is a terminal-based web search tool powered by LLMs. It searches the web, reads pages, and synthesizes answers with citations.
+NEXI is a web search tool. It searches, reads multiple pages, and returns synthesized answers with source citations.
 
-## Quick Install (if needed)
+## Invocation
 
-```bash
-uv tool install git+https://github.com/lirrensi/nexi-search.git
-# Then run: nexi (triggers config wizard)
-```
-
-See [references/installation.md](references/installation.md) for detailed install/config.
-Note that first it required to configure with config.json file! Ask user to manually setup first OR write a config as described in reference.
-
-## Basic Usage
-
-### Simple Search
+Always use `--plain` for non-interactive use:
 
 ```bash
-nexi "how do rust async traits work"
+nexi --plain "your search query"
 ```
 
-### Effort Levels
+The output is plain text with citations in `[1]`, `[2]` format and a sources section at the end.
+
+## Effort Levels
 
 Control search depth with `-e`:
 
+| Level | Iterations | Use When |
+|-------|------------|----------|
+| `-e s` | 8 | Quick facts, simple lookups |
+| `-e m` | 16 | Default, most queries |
+| `-e l` | 32 | Deep research, complex topics |
+
+Example:
 ```bash
-nexi -e s "quick fact"      # 8 iterations - fast
-nexi -e m "typical query"   # 16 iterations - balanced (default)
-nexi -e l "deep research"   # 32 iterations - thorough
+nexi --plain -e l "compare React vs Svelte performance 2024"
 ```
 
-### Verbose & Plain Modes
-
-```bash
-nexi -v "query"        # See LLM calls and tool execution
-nexi --plain "query"   # No colors/emojis - good for scripts
-```
-
-## Piping and Scripting
-
-```bash
-# Pipe input to Nexi
-echo "what is this" | nexi
-cat question.txt | nexi
-
-# Save output
-nexi --plain "topic" > result.txt
-
-# Use in scripts
-ANSWER=$(nexi --plain "weather in Tokyo")
-```
-
-## Interactive Mode (REPL)
-
-Start with just `nexi`:
+## Output Format
 
 ```
-$ nexi
-nexi> how do I use docker compose
-[answer appears]
+[Answer text with inline citations like [1] and [2]...]
 
-nexi> what about volumes
-[continues with context]
-
-nexi> exit
+Sources:
+[1] https://example.com/page1 - "Page Title"
+[2] https://example.com/page2 - "Another Title"
 ```
 
-Commands: `exit`, `quit`, `q` to leave.
+Parse the sources section to extract URLs for further processing if needed.
 
-## History Commands
+## Additional Flags
 
-```bash
-nexi --last 5          # Show last 5 searches
-nexi --prev            # Show latest result
-nexi --show abc123     # Show specific by ID
-nexi --clear-history   # Delete all history
-```
-
-## Configuration
-
-```bash
-nexi --config          # Show config path
-nexi --edit-config     # Open in $EDITOR
-```
-
-Config lives at `~/.local/share/nexi/config.json`.
-
-## CLI Options
-
-| Flag | Description |
-|------|-------------|
-| `-e, --effort s/m/l` | Search depth |
-| `-v, --verbose` | Show LLM calls |
-| `--plain` | No colors/emojis |
-| `--max-len N` | Limit output tokens |
-| `--max-iter N` | Max iterations |
+| Flag | Purpose |
+|------|---------|
+| `--max-len N` | Limit output tokens (default 8192) |
+| `--max-iter N` | Override max iterations |
 | `--time-target N` | Force answer after N seconds |
-| `--last N` | Show last N searches |
-| `--prev` | Show latest result |
-| `--show ID` | Show specific search |
+| `-v` | Verbose: show tool calls (debugging) |
 
-## Troubleshooting
+## Prerequisites
 
-| Issue | Solution |
-|-------|----------|
-| 401 Unauthorized | Check API keys in config |
-| 429 Rate Limit | Wait or switch model |
-| Slow searches | Use `-e s` or increase `time_target` |
-| UTF-8 issues | Use `--plain` |
+NEXI requires configuration before use. See [references/installation.md](references/installation.md) for:
+- Install commands
+- Required API keys (OpenAI-compatible + Jina)
+- Config file location and format
 
-## References
-
-- Detailed install/config: [references/installation.md](references/installation.md)
+If NEXI fails with config errors, read the installation reference to help set it up.
