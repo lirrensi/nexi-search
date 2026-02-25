@@ -29,6 +29,7 @@ from nexi.history import (
     clear_history as clear_history_func,
 )
 from nexi.output import (
+    _safe_print_stderr,
     create_progress_callback,
     is_tty,
     print_answer,
@@ -223,7 +224,7 @@ def _run_search_command(
 
         # Print newline after compact progress indicators (to stderr)
         if compact:
-            print(file=sys.stderr)  # End the [1][2][3] line
+            _safe_print_stderr("")  # End the [1][2][3] line
 
         # Print answer with citations
         print_answer(result.answer, plain, result.url_citations, result.url_to_title)

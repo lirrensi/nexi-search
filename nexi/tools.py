@@ -523,7 +523,7 @@ async def _search_single(
     except httpx.HTTPStatusError as e:
         error_msg = f"HTTP {e.response.status_code}: {e.response.text}"
         if verbose:
-            print(f"  [Jina Search] ❌ ERROR: {error_msg}")
+            print(f"  [Jina Search] ERROR: {error_msg}")
         return {
             "query": query,
             "error": error_msg,
@@ -532,7 +532,7 @@ async def _search_single(
     except Exception as e:
         error_msg = str(e)
         if verbose:
-            print(f"  [Jina Search] ❌ ERROR: {error_msg}")
+            print(f"  [Jina Search] ERROR: {error_msg}")
             # Try to show raw response if available
             if response:
                 with contextlib.suppress(BaseException):
@@ -647,7 +647,7 @@ async def web_get(
             if isinstance(result, Exception):
                 error_msg = str(result)
                 if verbose:
-                    print(f"  [Jina Reader] ❌ Chunk selection error for {url}: {error_msg}")
+                    print(f"  [Jina Reader] Chunk selection error for {url}: {error_msg}")
                 contents.append(
                     {
                         "url": url,
@@ -696,7 +696,7 @@ async def web_get(
             if isinstance(result, Exception):
                 error_msg = str(result)
                 if verbose:
-                    print(f"  [Jina Reader] ❌ LLM extraction error for {url}: {error_msg}")
+                    print(f"  [Jina Reader] LLM extraction error for {url}: {error_msg}")
                 contents.append(
                     {
                         "url": url,
@@ -880,7 +880,7 @@ async def _select_chunks_with_llm(
 
     except Exception as e:
         if verbose:
-            print(f"  [Chunk Selector] ❌ ERROR: {e}")
+            print(f"  [Chunk Selector] ERROR: {e}")
         # Fallback: return first few chunks as best-effort
         # This handles API failures, timeouts, etc. gracefully
         fallback_count = min(5, len(chunks))
@@ -942,7 +942,7 @@ async def _extract_with_llm(
         return extracted
     except Exception as e:
         if verbose:
-            print(f"  [LLM Extractor] ❌ ERROR: {e}")
+            print(f"  [LLM Extractor] ERROR: {e}")
         # Fallback to raw content on error
         return content[:2000]
 

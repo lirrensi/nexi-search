@@ -303,7 +303,7 @@ async def run_search(
                     )
                     report_progress(error_msg, current_iteration)
                     if verbose:
-                        print(f"[LLM] ❌ ERROR: {error_msg}")
+                        print(f"[LLM] ERROR: {error_msg}")
 
                     if attempt < config.llm_max_retries - 1:
                         # Exponential backoff: 1s, 2s, 4s
@@ -373,10 +373,10 @@ async def run_search(
                         )
                         for search in result.get("searches", []):
                             if "error" in search:
-                                print(f"  ❌ Error for '{search.get('query')}': {search['error']}")
+                                print(f"  [ERROR] '{search.get('query')}': {search['error']}")
                             else:
                                 print(
-                                    f"  ✓ '{search.get('query')}' returned {len(search.get('results', []))} results"
+                                    f"  [OK] '{search.get('query')}' returned {len(search.get('results', []))} results"
                                 )
 
                     # Capture titles from search results for citations
@@ -438,10 +438,10 @@ async def run_search(
                         )
                         for page in result.get("pages", []):
                             if "error" in page:
-                                print(f"  ❌ Error for '{page.get('url')}': {page['error']}")
+                                print(f"  [ERROR] '{page.get('url')}': {page['error']}")
                             else:
                                 content_len = len(page.get("content", ""))
-                                print(f"  ✓ '{page.get('url')}' fetched {content_len} chars")
+                                print(f"  [OK] '{page.get('url')}' fetched {content_len} chars")
 
                     # Estimate tokens for tool result
                     estimated_tokens = estimate_page_tokens(

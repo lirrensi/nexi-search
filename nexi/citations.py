@@ -63,10 +63,7 @@ def format_citations_section(
         return ""
 
     lines = []
-    if plain:
-        lines.append("Sources:")
-    else:
-        lines.append("📚 Sources:")
+    lines.append("Sources:")
 
     for num in sorted(marker_url_map.keys()):
         url = marker_url_map[num]

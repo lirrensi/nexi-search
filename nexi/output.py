@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import sys
 from collections.abc import Callable
 
@@ -304,6 +305,19 @@ def print_history_entry(entry_text: str, plain: bool = False) -> None:
     print(entry_text)
 
 
+def _safe_print_stderr(text: str) -> None:
+    """Print to stderr with encoding fallback for Windows."""
+    try:
+        print(text, file=sys.stderr)
+    except UnicodeEncodeError:
+        safe_text = text.encode("utf-8", errors="replace").decode("utf-8")
+        try:
+            print(safe_text, file=sys.stderr)
+        except UnicodeEncodeError:
+            safe_text = text.encode("ascii", "ignore").decode("ascii")
+            print(safe_text, file=sys.stderr)
+
+
 def print_error(message: str, plain: bool = False) -> None:
     """Print an error message.
 
@@ -312,10 +326,13 @@ def print_error(message: str, plain: bool = False) -> None:
         plain: Force plain mode
     """
     if plain or not is_tty():
-        print(f"Error: {message}", file=sys.stderr)
+        _safe_print_stderr(f"Error: {message}")
     else:
-        console = get_console()
-        console.print(f"❌ Error: {message}", style="red")
+        try:
+            console = get_console()
+            console.print(f"❌ Error: {message}", style="red")
+        except UnicodeEncodeError:
+            _safe_print_stderr(f"Error: {message}")
 
 
 def print_warning(message: str, plain: bool = False) -> None:
@@ -375,11 +392,12 @@ def create_progress_callback(
             if iteration > 0 and iteration not in tracker.iterations:
                 tracker.add_iteration(iteration)
                 # Print to stderr so it doesn't corrupt piped stdout
-                print(f"[{iteration}]", end="", file=sys.stderr, flush=True)
+                with contextlib.suppress(UnicodeEncodeError):
+                    print(f"[{iteration}]", end="", file=sys.stderr, flush=True)
             # Track errors (still print to stderr)
             if "error" in message.lower() or "timeout" in message.lower():
                 tracker.add_error(message)
-                print(f"\n[error: {message}]", file=sys.stderr, flush=True)
+                _safe_print_stderr(f"\n[error: {message}]")
         elif verbose:
             print(f"[{iteration}/{total}] {message}")
         else:
