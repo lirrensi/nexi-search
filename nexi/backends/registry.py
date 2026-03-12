@@ -5,14 +5,38 @@ from __future__ import annotations
 from typing import Any
 
 from nexi.backends.base import FetchProvider, LLMProvider, SearchProvider
+from nexi.backends.brave import BraveSearchProvider
+from nexi.backends.crawl4ai import Crawl4AIFetchProvider
+from nexi.backends.exa import ExaFetchProvider, ExaSearchProvider
+from nexi.backends.firecrawl import FirecrawlFetchProvider, FirecrawlSearchProvider
 from nexi.backends.jina import JinaFetchProvider, JinaSearchProvider
+from nexi.backends.linkup import LinkupFetchProvider, LinkupSearchProvider
+from nexi.backends.markdown_new import MarkdownNewFetchProvider
 from nexi.backends.openai_compatible import OpenAICompatibleLLMProvider
+from nexi.backends.perplexity_search import PerplexitySearchProvider
+from nexi.backends.serpapi import SerpAPISearchProvider
+from nexi.backends.serper import SerperSearchProvider
+from nexi.backends.tavily import TavilyFetchProvider, TavilySearchProvider
 
 SEARCH_PROVIDER_REGISTRY: dict[str, type[SearchProvider]] = {
+    "brave": BraveSearchProvider,
+    "exa": ExaSearchProvider,
+    "firecrawl": FirecrawlSearchProvider,
     "jina": JinaSearchProvider,
+    "linkup": LinkupSearchProvider,
+    "perplexity_search": PerplexitySearchProvider,
+    "serpapi": SerpAPISearchProvider,
+    "serper": SerperSearchProvider,
+    "tavily": TavilySearchProvider,
 }
 FETCH_PROVIDER_REGISTRY: dict[str, type[FetchProvider]] = {
+    "crawl4ai": Crawl4AIFetchProvider,
+    "exa": ExaFetchProvider,
+    "firecrawl": FirecrawlFetchProvider,
     "jina": JinaFetchProvider,
+    "linkup": LinkupFetchProvider,
+    "markdown_new": MarkdownNewFetchProvider,
+    "tavily": TavilyFetchProvider,
 }
 LLM_PROVIDER_REGISTRY: dict[str, type[LLMProvider]] = {
     "openai_compatible": OpenAICompatibleLLMProvider,

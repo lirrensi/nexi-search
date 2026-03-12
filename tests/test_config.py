@@ -104,13 +104,23 @@ def test_load_config_migrates_legacy_shape(tmp_path: Path, monkeypatch) -> None:
 
     assert loaded.llm_backends == ["openai_default"]
     assert loaded.search_backends == ["jina"]
-    assert loaded.fetch_backends == ["jina"]
+    assert loaded.fetch_backends == ["crawl4ai_local", "markdown_new", "jina"]
     assert loaded.providers["openai_default"]["type"] == "openai_compatible"
     assert loaded.providers["openai_default"]["base_url"] == "https://legacy.example/v1"
     assert loaded.providers["openai_default"]["api_key"] == "legacy-key"
     assert loaded.providers["openai_default"]["model"] == "legacy-model"
+    assert loaded.providers["markdown_new"]["type"] == "markdown_new"
+    assert loaded.providers["crawl4ai_local"]["type"] == "crawl4ai"
     assert loaded.providers["jina"]["type"] == "jina"
     assert loaded.providers["jina"]["api_key"] == "legacy-jina"
+    assert loaded.providers["tavily"]["type"] == "tavily"
+    assert loaded.providers["exa"]["type"] == "exa"
+    assert loaded.providers["firecrawl"]["type"] == "firecrawl"
+    assert loaded.providers["linkup"]["type"] == "linkup"
+    assert loaded.providers["brave"]["type"] == "brave"
+    assert loaded.providers["serpapi"]["type"] == "serpapi"
+    assert loaded.providers["serper"]["type"] == "serper"
+    assert loaded.providers["perplexity_search"]["type"] == "perplexity_search"
 
 
 def test_save_config_writes_canonical_shape(tmp_path: Path, monkeypatch) -> None:
@@ -145,6 +155,16 @@ def test_default_config_has_provider_chains() -> None:
     """Default config exposes provider chains and provider registry."""
     assert DEFAULT_CONFIG["llm_backends"] == ["openai_default"]
     assert DEFAULT_CONFIG["search_backends"] == ["jina"]
-    assert DEFAULT_CONFIG["fetch_backends"] == ["jina"]
+    assert DEFAULT_CONFIG["fetch_backends"] == ["crawl4ai_local", "markdown_new", "jina"]
     assert DEFAULT_CONFIG["providers"]["openai_default"]["type"] == "openai_compatible"
+    assert DEFAULT_CONFIG["providers"]["markdown_new"]["type"] == "markdown_new"
+    assert DEFAULT_CONFIG["providers"]["crawl4ai_local"]["type"] == "crawl4ai"
     assert DEFAULT_CONFIG["providers"]["jina"]["type"] == "jina"
+    assert DEFAULT_CONFIG["providers"]["tavily"]["type"] == "tavily"
+    assert DEFAULT_CONFIG["providers"]["exa"]["type"] == "exa"
+    assert DEFAULT_CONFIG["providers"]["firecrawl"]["type"] == "firecrawl"
+    assert DEFAULT_CONFIG["providers"]["linkup"]["type"] == "linkup"
+    assert DEFAULT_CONFIG["providers"]["brave"]["type"] == "brave"
+    assert DEFAULT_CONFIG["providers"]["serpapi"]["type"] == "serpapi"
+    assert DEFAULT_CONFIG["providers"]["serper"]["type"] == "serper"
+    assert DEFAULT_CONFIG["providers"]["perplexity_search"]["type"] == "perplexity_search"

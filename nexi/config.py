@@ -24,7 +24,7 @@ EFFORT_LEVELS = {
 DEFAULT_CONFIG = {
     "llm_backends": ["openai_default"],
     "search_backends": ["jina"],
-    "fetch_backends": ["jina"],
+    "fetch_backends": ["crawl4ai_local", "markdown_new", "jina"],
     "providers": {
         "openai_default": {
             "type": "openai_compatible",
@@ -32,9 +32,64 @@ DEFAULT_CONFIG = {
             "api_key": "",
             "model": "google/gemini-2.5-flash-lite",
         },
+        "markdown_new": {
+            "type": "markdown_new",
+            "method": "auto",
+            "retain_images": False,
+        },
+        "crawl4ai_local": {
+            "type": "crawl4ai",
+            "headless": True,
+        },
         "jina": {
             "type": "jina",
             "api_key": "",
+        },
+        "tavily": {
+            "type": "tavily",
+            "api_key": "",
+            "search_depth": "basic",
+            "topic": "general",
+            "max_results": 5,
+        },
+        "exa": {
+            "type": "exa",
+            "api_key": "",
+            "num_results": 5,
+            "text": True,
+        },
+        "firecrawl": {
+            "type": "firecrawl",
+            "api_key": "",
+            "only_main_content": True,
+            "formats": ["markdown"],
+            "limit": 5,
+        },
+        "linkup": {
+            "type": "linkup",
+            "api_key": "",
+            "depth": "standard",
+            "output_type": "searchResults",
+        },
+        "brave": {
+            "type": "brave",
+            "api_key": "",
+            "count": 5,
+        },
+        "serpapi": {
+            "type": "serpapi",
+            "api_key": "",
+            "engine": "google",
+        },
+        "serper": {
+            "type": "serper",
+            "api_key": "",
+            "num": 5,
+        },
+        "perplexity_search": {
+            "type": "perplexity_search",
+            "api_key": "",
+            "max_results": 5,
         },
     },
     "default_effort": "m",
@@ -194,23 +249,21 @@ def _is_legacy_config(data: dict[str, Any]) -> bool:
 def _migrate_legacy_config(data: dict[str, Any]) -> dict[str, Any]:
     """Migrate a legacy config dictionary to the canonical provider shape."""
     migrated = _build_default_config()
-    migrated["providers"] = {
-        "openai_default": {
-            "type": "openai_compatible",
-            "base_url": data.get(
-                "base_url",
-                DEFAULT_CONFIG["providers"]["openai_default"]["base_url"],
-            ),
-            "api_key": data.get("api_key", ""),
-            "model": data.get(
-                "model",
-                DEFAULT_CONFIG["providers"]["openai_default"]["model"],
-            ),
-        },
-        "jina": {
-            "type": "jina",
-            "api_key": data.get("jina_key", ""),
-        },
+    migrated["providers"]["openai_default"] = {
+        "type": "openai_compatible",
+        "base_url": data.get(
+            "base_url",
+            DEFAULT_CONFIG["providers"]["openai_default"]["base_url"],
+        ),
+        "api_key": data.get("api_key", ""),
+        "model": data.get(
+            "model",
+            DEFAULT_CONFIG["providers"]["openai_default"]["model"],
+        ),
+    }
+    migrated["providers"]["jina"] = {
+        "type": "jina",
+        "api_key": data.get("jina_key", ""),
     }
     migrated["default_effort"] = data.get("default_effort", DEFAULT_CONFIG["default_effort"])
     migrated["max_output_tokens"] = data.get(
@@ -428,17 +481,15 @@ def _build_default_runtime_config(
 ) -> dict[str, Any]:
     """Create the canonical config payload from first-time setup answers."""
     config = _build_default_config()
-    config["providers"] = {
-        "openai_default": {
-            "type": "openai_compatible",
-            "base_url": base_url,
-            "api_key": api_key,
-            "model": model,
-        },
-        "jina": {
-            "type": "jina",
-            "api_key": jina_key,
-        },
+    config["providers"]["openai_default"] = {
+        "type": "openai_compatible",
+        "base_url": base_url,
+        "api_key": api_key,
+        "model": model,
+    }
+    config["providers"]["jina"] = {
+        "type": "jina",
+        "api_key": jina_key,
     }
     return config
 
