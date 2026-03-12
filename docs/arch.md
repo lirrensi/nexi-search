@@ -6,35 +6,39 @@
 
 ## Overview
 
-NEXI is an intelligent web search CLI tool that uses an agentic search loop powered by Large Language Models (LLMs) to provide comprehensive, well-researched answers to user queries. It combines web search, content extraction, and intelligent synthesis to deliver high-quality responses with proper source attribution.
+NEXI is an intelligent research CLI that uses an agentic search loop powered by Large Language Models (LLMs) to provide comprehensive, well-researched answers to user queries. It combines provider-orchestrated web search, content fetching, and intelligent synthesis to deliver high-quality responses with proper source attribution.
 
 ### Core Philosophy
 
 - **Agentic Search**: The LLM autonomously decides what to search for and which pages to read
+- **Provider-Orchestrated**: LLM, search, and fetch capabilities route through ordered provider chains
 - **Context-Aware**: Automatically manages conversation context to prevent token overflow
 - **Tool-Based**: Uses function calling to give the LLM structured access to web capabilities
+- **Failure-Resistant**: Search and fetch retry within a provider, then fail over; LLM fails over immediately on hard failure
 - **Efficient**: Parallel searches and intelligent caching minimize latency
-- **Transparent**: Verbose mode shows all decisions, tool calls, and token usage
+- **Transparent**: Verbose mode shows all decisions, tool calls, provider failures, and token usage
 
 ### Scope Boundary
 
 **This system owns**:
 - Agentic search loop orchestration
-- Web search and content extraction via Jina AI
+- Provider orchestration for LLM, web search, and web fetch
 - Conversation context management and compaction
 - Citation tracking and formatting
 - CLI interface and history management
+- Direct `nexi-search` and `nexi-fetch` binaries
 - MCP server for tool integration
 
 **This system does NOT own**:
 - LLM inference (delegates to OpenAI-compatible APIs)
-- Web crawling (delegates to Jina AI)
+- Search quality or ranking quality of external providers
+- Web crawling (delegates to external providers)
 - Content rendering (outputs plain text/markdown)
 
 **Boundary interfaces**:
 - Receives queries from CLI, stdin, or MCP
-- Calls external LLM API via OpenAI-compatible protocol
-- Calls Jina AI for search and content fetching
+- Calls external LLM providers via OpenAI-compatible or provider-specific adapters
+- Calls search and fetch providers through internal provider interfaces
 
 ---
 
@@ -55,9 +59,9 @@ NEXI is an intelligent web search CLI tool that uses an agentic search loop powe
 
 | Service | Endpoint | Purpose |
 |---------|----------|---------|
-| LLM API | Configurable (OpenAI-compatible) | Chat completions with function calling |
-| Jina Search | `https://s.jina.ai/` | Web search |
-| Jina Reader | `https://r.jina.ai/` | Content extraction from URLs |
+| LLM Providers | Configurable per provider | Chat completions with function calling |
+| Search Providers | Configurable per provider | Web search |
+| Fetch Providers | Configurable per provider | Content extraction from URLs |
 
 ---
 
@@ -66,7 +70,7 @@ NEXI is an intelligent web search CLI tool that uses an agentic search loop powe
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                         CLI Interface                            │
-│  (nexi/cli.py, main.py, nexi/__main__.py)                       │
+│  (nexi/cli.py, direct search/fetch entrypoints, main.py)        │
 └────────────────────┬────────────────────────────────────────────┘
                      │
                      ├─────────────────────────────────────────────┐
@@ -77,8 +81,9 @@ NEXI is an intelligent web search CLI tool that uses an agentic search loop powe
 │   (nexi/config.py)           │              │      (nexi/history.py)           │
 │                              │              │                                  │
 │  - Load/Save Config          │              │  - JSONL Storage                 │
-│  - Validation                │              │  - Entry Creation/Retrieval      │
+│  - Provider Validation       │              │  - Entry Creation/Retrieval      │
 │  - Prompt Templates          │              │  - Formatting                    │
+│  - Ordered Chains            │              │                                  │
 └──────────────────────────────┘              └──────────────────────────────────┘
                      │
                      ▼
@@ -89,7 +94,7 @@ NEXI is an intelligent web search CLI tool that uses an agentic search loop powe
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │              Agentic Search Loop                         │  │
 │  │                                                           │  │
-│  │  1. Call LLM with tools                                  │  │
+│  │  1. Call LLM through llm_backends                        │  │
 │  │  2. Parse tool_calls                                     │  │
 │  │  3. Execute tools (web_search, web_get, final_answer)    │  │
 │  │  4. Add results to conversation                          │  │
@@ -110,7 +115,7 @@ NEXI is an intelligent web search CLI tool that uses an agentic search loop powe
 │- web_get     │ │          │ │- Extract     │ │- count_tokens│
 │- final_answer│ │- Track   │ │- Summarize   │ │- count_msgs  │
 │              │ │- Format  │ │- Rebuild     │ │- estimate    │
-│- Backends    │ │- Detect  │ │              │ │              │
+│- Orchestrators││- Detect  │ │              │ │              │
 └──────────────┘ └──────────┘ └──────────────┘ └──────────────┘
          │
          ▼
@@ -118,11 +123,12 @@ NEXI is an intelligent web search CLI tool that uses an agentic search loop powe
 │                     External Services                           │
 │                                                                  │
 │  ┌──────────────────────┐      ┌──────────────────────────────┐ │
-│  │   LLM API            │      │   Jina AI Services           │ │
-│  │   (OpenAI-compatible)│      │                              │ │
-│  │                      │      │  - s.jina.ai (Search)        │ │
-│  │  - Chat Completions  │      │  - r.jina.ai (Reader)        │ │
-│  │  - Function Calling  │      │                              │ │
+│  │   LLM Providers      │      │   Search / Fetch Providers   │ │
+│  │   (ordered chain)    │      │   (ordered chains)           │ │
+│  │                      │      │                              │ │
+│  │  - Chat Completions  │      │  - Search APIs               │ │
+│  │  - Function Calling  │      │  - Reader / Extraction APIs  │ │
+│  │  - Provider Failover │      │  - Provider Failover         │ │
 │  └──────────────────────┘      └──────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -131,15 +137,21 @@ NEXI is an intelligent web search CLI tool that uses an agentic search loop powe
 
 ## Module Breakdown
 
-### 1. CLI Interface (`nexi/cli.py`, `main.py`, `nexi/__main__.py`)
+### 1. CLI Interface (`nexi/cli.py`, `main.py`, `nexi/__main__.py`, direct search/fetch entrypoints)
 
 **Purpose**: Entry points for command-line interaction
 
+**Runtime Surfaces**:
+- `nexi`: Full agentic workflow with search loop, citations, history, and MCP-facing behavior
+- `nexi-search`: Direct search CLI that exposes backend-orchestrated search without the agent loop
+- `nexi-fetch`: Direct fetch CLI that exposes backend-orchestrated fetch/extraction without the agent loop
+
 **Key Functions**:
-- `main()`: Click-based CLI command handler
-- `_run_search_command()`: Orchestrates search execution
+- `main()`: Click-based CLI command handler for `nexi`
+- `_run_search_command()`: Orchestrates full search execution
 - `_interactive_mode()`: REPL for continuous queries with multi-turn support
 - `_show_last_n()`, `_show_prev()`, `_show_by_id()`: History viewing
+- Direct search/fetch entrypoints: Parse args, invoke orchestration layer, print plain text or JSON
 
 **Features**:
 - Argument parsing (query, effort, max_iter, time_target, verbose, plain)
@@ -147,6 +159,8 @@ NEXI is an intelligent web search CLI tool that uses an agentic search loop powe
 - Interactive REPL mode with conversation history
 - History management commands
 - Config editing/viewing
+- `--json` output mode for `nexi-search` and `nexi-fetch`
+- stdout-first design so shell redirection/piping handles file output
 
 **Multi-Turn Support**:
 - Interactive mode tracks `conversation_history: list[dict[str, Any]]`
@@ -168,29 +182,35 @@ NEXI is an intelligent web search CLI tool that uses an agentic search loop powe
 ```python
 @dataclass
 class Config:
-    base_url: str                    # LLM API endpoint
-    api_key: str                     # LLM API key
-    model: str                       # Model name
-    jina_key: str                    # Jina AI API key
-    default_effort: str              # s/m/l
-    max_output_tokens: int           # Max tokens in final answer
-    time_target: int | None          # Soft time limit (seconds)
-    max_context: int                 # Model's context window limit
-    auto_compact_thresh: float       # Trigger compaction at this fraction
-    compact_target_words: int        # Target word count for summaries
-    preserve_last_n_messages: int    # Recent messages to keep un-compacted
-    tokenizer_encoding: str          # tiktoken encoding name
-    jina_timeout: int                # Timeout for Jina API calls
-    llm_max_retries: int             # Max retry attempts for LLM API
-    search_backend: str              # Backend name (default: "jina")
-    content_fetcher: str             # Fetcher name (default: "jina")
-    api_keys: dict[str, str]         # Additional API keys by backend name
+    llm_backends: list[str]              # Ordered LLM provider chain
+    search_backends: list[str]           # Ordered search provider chain
+    fetch_backends: list[str]            # Ordered fetch provider chain
+    providers: dict[str, dict[str, Any]] # Provider config objects by instance name
+    default_effort: str                  # s/m/l
+    max_output_tokens: int               # Max tokens in final answer
+    time_target: int | None              # Soft time limit (seconds)
+    max_context: int                     # Model's context window limit
+    auto_compact_thresh: float           # Trigger compaction at this fraction
+    compact_target_words: int            # Target word count for summaries
+    preserve_last_n_messages: int        # Recent messages to keep un-compacted
+    tokenizer_encoding: str              # tiktoken encoding name
+    provider_timeout: int                # Default timeout for provider API calls
+    search_provider_retries: int         # Retries per search provider before failover
+    fetch_provider_retries: int          # Retries per fetch provider before failover
 ```
+
+**Provider Configuration Model**:
+- `providers` is the shared config registry for all provider instances
+- Each top-level chain (`llm_backends`, `search_backends`, `fetch_backends`) references provider instance names defined in `providers`
+- Each provider config object MUST include `type` so the registry can resolve the correct adapter class
+- A provider config object MAY include `api_key`, `base_url`, `model`, headers, rate limits, or provider-specific tuning knobs
+- A listed provider instance MUST exist in `providers`
+- Each provider class MUST validate its own config before execution
 
 **Key Functions**:
 - `load_config()`: Load from `~/.local/share/nexi/config.json`
 - `save_config()`: Persist configuration
-- `validate_config()`: Validate all fields with detailed error messages
+- `validate_config()`: Validate top-level fields, provider references, and global settings
 - `ensure_config()`: Load or run first-time setup
 - `run_first_time_setup()`: Interactive configuration wizard
 - `get_system_prompt()`: Generate system prompt with effort level
@@ -238,37 +258,41 @@ class SearchResult:
 
 ```
 1. Initialize:
-   - Clear URL cache
-   - Set max_iter from effort level
-   - Set time_target from config or CLI override
-   - Create conversation with system prompt + user query
-   - Initialize OpenAI client
-   - Initialize citation tracking (url_to_number, url_to_title)
+    - Clear URL cache
+    - Set max_iter from effort level
+    - Set time_target from config or CLI override
+    - Create conversation with system prompt + user query
+    - Initialize LLM provider orchestrator from llm_backends
+    - Initialize citation tracking (url_to_number, url_to_title)
 
 2. For each iteration (1 to max_iter):
-   a. Check time_target → break if exceeded
-   b. Call LLM with tools and current conversation (with retry logic)
-   c. Track token usage
-   d. Parse response.message.tool_calls
+    a. Check time_target → break if exceeded
+    b. Call LLM with tools and current conversation through the LLM provider chain
+    c. Track token usage
+    d. Parse response.message.tool_calls
 
-   e. If tool_call is "final_answer":
-      - Extract answer
-      - Break loop
+    e. If tool_call is "final_answer":
+       - Extract answer
+       - Break loop
 
-   f. If tool_call is "web_search":
-      - Execute parallel searches via Jina AI
-      - Capture titles from results for citations
-      - Add assistant message (tool_calls) to conversation
-      - Add tool message (results) to conversation
+    f. If tool_call is "web_search":
+       - Execute provider-orchestrated searches over pending queries
+       - Retry failed queries inside the active provider
+       - Fail over only remaining failed queries to the next provider
+       - Capture titles from results for citations
+       - Add assistant message (tool_calls) to conversation
+       - Add tool message (results) to conversation
 
-   g. If tool_call is "web_get":
-      - Assign stable citation numbers to URLs
-      - Execute parallel fetches via Jina Reader
-      - Process content (full, chunks, or extraction)
-      - Estimate tokens for result
-      - Check if compaction needed:
-         - If current + estimated > threshold:
-           - Compact conversation
+    g. If tool_call is "web_get":
+       - Assign stable citation numbers to URLs
+       - Execute provider-orchestrated fetches over pending URLs
+       - Retry failed URLs inside the active provider
+       - Fail over only remaining failed URLs to the next provider
+       - Process content (full, chunks, or extraction)
+       - Estimate tokens for result
+       - Check if compaction needed:
+          - If current + estimated > threshold:
+            - Compact conversation
            - If still over limit → force answer and break
       - Track URLs fetched
       - Add assistant message (tool_calls) to conversation
@@ -282,9 +306,15 @@ class SearchResult:
    - Request final answer via _request_final_answer()
 
 4. Return SearchResult with:
-   - answer, urls, url_citations, url_to_title
-   - iterations, duration_s, tokens, reached_max_iter
+    - answer, urls, url_citations, url_to_title
+    - iterations, duration_s, tokens, reached_max_iter
 ```
+
+**LLM Provider Failover Rules**:
+- `llm_backends` is evaluated in order
+- On the first hard provider failure (auth, payment, rate-limit hard stop, network/provider unreachable, model-not-found), the active provider is marked unhealthy for the current run
+- The same iteration is retried against the next configured LLM provider
+- If all LLM providers fail, the search returns a forced error answer and terminates
 
 **Citation Tracking**:
 - `url_to_number: dict[str, int]`: Maps URLs to stable citation numbers [1], [2], etc.
@@ -322,15 +352,17 @@ Three tools are exposed to the LLM via function calling:
 - `run_search_sync()`: Synchronous wrapper using new event loop
 
 **Retry Logic**:
-- LLM API calls retry up to `config.llm_max_retries` times (default: 3)
-- Exponential backoff: 1s, 2s, 4s
-- On final failure, returns forced answer with error message
+- Search providers retry failed items up to `config.search_provider_retries` times (default: 2)
+- Fetch providers retry failed items up to `config.fetch_provider_retries` times (default: 2)
+- Search/fetch retries use exponential backoff before failover
+- LLM providers do NOT use same-provider retry on hard failure; they fail over immediately
+- On total provider chain failure, the search returns a forced error answer and terminates
 
 ---
 
-### 4. Tool Implementations (`nexi/tools.py`)
+### 4. Tool Implementations and Provider Orchestration (`nexi/tools.py`, `nexi/backends/`)
 
-**Purpose**: Execute web search and content retrieval
+**Purpose**: Execute web search and content retrieval through provider interfaces and orchestration rules
 
 **URL Caching**:
 - In-memory cache `_url_cache: dict[str, str]`
@@ -342,38 +374,91 @@ Three tools are exposed to the LLM via function calling:
 - Limits: max_connections=10, max_keepalive_connections=5
 - Closed via `close_http_client()`
 
-#### Backend Protocols
+#### Provider Protocols
 
 ```python
-class SearchBackend(Protocol):
+class Provider(Protocol):
+    name: str
+
+    def validate_config(self, config: dict[str, Any]) -> None:
+        """Raise ValueError if required config is missing or invalid."""
+
+
+class SearchProvider(Provider, Protocol):
     async def search(
         self,
         queries: list[str],
-        api_key: str,
+        config: dict[str, Any],
         timeout: float,
         verbose: bool,
     ) -> dict[str, Any]:
         """Returns {"searches": [{"query": str, "results": [...], "error": str}]}"""
 
-class ContentFetcher(Protocol):
+
+class FetchProvider(Provider, Protocol):
     async def fetch(
         self,
         urls: list[str],
-        api_key: str,
+        config: dict[str, Any],
         timeout: float,
         verbose: bool,
     ) -> dict[str, Any]:
         """Returns {"pages": [{"url": str, "content": str, "error": str}]}"""
+
+
+class LLMProvider(Provider, Protocol):
+    async def complete(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        config: dict[str, Any],
+        verbose: bool,
+    ) -> Any:
+        """Returns provider response compatible with NEXI's chat loop."""
 ```
 
-#### JinaSearchBackend
+#### Provider Layout
 
-**Process**:
-1. Create parallel tasks for each query (1-5 queries)
-2. Execute via `asyncio.gather()`
-3. Call Jina AI Search API: `https://s.jina.ai/?q={query}`
-4. Parse response (JSON or text format)
-5. Return structured results
+- Provider classes live under `nexi/backends/`
+- Providers are grouped by capability or shared module, but referenced by provider name in config
+- A provider MAY implement one capability or several capabilities
+- Adding a new provider SHOULD primarily require:
+  1. adding the provider class,
+  2. registering its capability mapping,
+  3. documenting its config contract
+
+#### Search / Fetch Orchestrators
+
+**Search orchestration process**:
+1. Start with the full query set as pending
+2. Select the first provider instance from `search_backends`
+3. Read `providers[provider_name]`
+4. Resolve the provider adapter from `providers[provider_name]["type"]`
+5. Validate provider config
+6. Run the provider against pending queries
+7. Keep successful query results
+8. Retry only failed queries within the same provider up to `search_provider_retries`
+9. Move any still-failed queries to the next provider in the chain
+10. Return the combined result set plus provider failure metadata
+
+**Fetch orchestration process**:
+1. Start with the full URL set as pending
+2. Select the first provider instance from `fetch_backends`
+3. Read `providers[provider_name]`
+4. Resolve the provider adapter from `providers[provider_name]["type"]`
+5. Validate provider config
+6. Run the provider against pending URLs
+7. Keep successful URL fetches
+8. Retry only failed URLs within the same provider up to `fetch_provider_retries`
+9. Move any still-failed URLs to the next provider in the chain
+10. Return the combined page set plus provider failure metadata
+
+#### Direct Commands
+
+- `nexi-search` calls the search orchestrator directly and prints either plain text or JSON
+- `nexi-fetch` calls the fetch orchestrator directly and prints either extracted text or JSON
+- Direct commands do not create citations/history unless explicitly requested by their own contract in a future revision
+- Direct commands MUST exit non-zero if every configured provider fails for every requested item
 
 **Response Format**:
 ```python
@@ -395,23 +480,19 @@ class ContentFetcher(Protocol):
 }
 ```
 
-#### JinaContentFetcher
+#### Fetch Processing Modes
 
-**Process**:
-1. Check URL cache → skip if already fetched
-2. Create parallel tasks for uncached URLs (1-8 URLs)
-3. Call Jina Reader API: `https://r.jina.ai/{url}`
-4. Headers:
-   - `X-Retain-Images: none`
-   - `X-Retain-Links: gpt-oss`
-   - `X-Timeout: 40`
-   - `Authorization: Bearer {jina_key}` (if provided)
-5. Store raw content in cache
+Raw page content returned by a fetch provider is processed in three modes:
+
+1. Cache check for previously fetched URLs
+2. Fetch raw content through the provider chain
+3. Process raw content in one of the three `web_get` modes below
+4. Store successful raw content in cache
 
 #### web_get Processing Modes
 
 **1. Full Content (`get_full=True`)**:
-- Return raw markdown from Jina Reader
+- Return raw markdown from the active fetch provider
 - No LLM processing
 
 **2. Chunk-Based Selection (`use_chunks=True`)**:
@@ -428,8 +509,8 @@ class ContentFetcher(Protocol):
 **Chunk Creation**:
 ```python
 def create_logical_chunks(md: str, target_chars: int = 480, max_chars: int = 720) -> list[Chunk]:
-    """Heading-aware logical chunking for clean Jina Markdown.
-    
+    """Heading-aware logical chunking for clean provider markdown.
+     
     Respects headings, merges small paragraphs, splits oversized chunks.
     """
 ```
@@ -450,6 +531,7 @@ def create_logical_chunks(md: str, target_chars: int = 480, max_chars: int = 720
 - HTTP errors captured and returned in result
 - Exceptions caught and returned as error messages
 - Individual query/URL failures don't abort entire operation
+- Provider failure metadata is attached so users can see which provider failed and why
 
 ---
 
@@ -711,21 +793,21 @@ Initialize Search Loop
     ├─► Clear URL Cache
     ├─► Set max_iter, time_target
     ├─► Create conversation (system + user)
-    └─► Initialize OpenAI client
+    └─► Initialize LLM provider orchestrator
     │
     ▼
 ┌─────────────────────────────────────┐
 │         Iteration Loop              │
 │                                     │
 │  1. Check time_target               │
-│  2. Call LLM with tools (retry)     │
+│  2. Call LLM with provider fallback │
 │  3. Parse tool_calls                │
 │  4. Execute tool                    │
 │     ├─► web_search                  │
-│     │   └─► Jina AI Search API      │
+│     │   └─► Search provider chain   │
 │     ├─► web_get                     │
 │     │   ├─► Check cache             │
-│     │   ├─► Jina Reader API         │
+│     │   ├─► Fetch provider chain    │
 │     │   ├─► Process (full/chunks/extract) │
 │     │   └─► Update cache            │
 │     └─► final_answer                │
@@ -808,40 +890,42 @@ Interactive Mode Started
 ### Required Fields
 
 All configurations must include:
-- `base_url`: Valid HTTP(S) URL for LLM API
-- `api_key`: Non-empty string
-- `model`: Non-empty string
+- `llm_backends`: Ordered list of provider names for LLM execution
+- `search_backends`: Ordered list of provider names for search execution
+- `fetch_backends`: Ordered list of provider names for fetch execution
+- `providers`: Mapping of provider name to provider config object
 - `default_effort`: One of "s", "m", "l"
 - `max_output_tokens`: Positive integer
 
 ### Optional Fields
 
-- `jina_key`: String or empty (free tier available)
 - `time_target`: Positive integer or null (no limit)
 - `max_context`: Positive integer (default: 128000)
 - `auto_compact_thresh`: Float between 0.0 and 1.0 (default: 0.9)
 - `compact_target_words`: Positive integer (default: 5000)
 - `preserve_last_n_messages`: Non-negative integer (default: 3)
 - `tokenizer_encoding`: Non-empty string (default: "cl100k_base")
-- `jina_timeout`: Positive integer (default: 30)
-- `llm_max_retries`: Positive integer (default: 3)
+- `provider_timeout`: Positive integer (default: 30)
+- `search_provider_retries`: Positive integer (default: 2)
+- `fetch_provider_retries`: Positive integer (default: 2)
 
 ### Validation Rules
 
-1. **base_url**: Must start with `http://` or `https://`
-2. **api_key**: Must be non-empty string
-3. **model**: Must be non-empty string
-4. **jina_key**: Must be string (can be empty)
-5. **default_effort**: Must be in `["s", "m", "l"]`
-6. **max_output_tokens**: Must be positive integer
-7. **time_target**: Must be positive integer or null
-8. **max_context**: Must be positive integer
-9. **auto_compact_thresh**: Must be between 0.0 and 1.0
-10. **compact_target_words**: Must be positive integer
-11. **preserve_last_n_messages**: Must be non-negative integer
-12. **tokenizer_encoding**: Must be non-empty string
-13. **jina_timeout**: Must be positive integer
-14. **llm_max_retries**: Must be positive integer
+1. **llm_backends / search_backends / fetch_backends**: Must be non-empty ordered lists when that capability is required by the command
+2. **providers**: Must be an object keyed by provider instance name
+3. **listed providers**: Every name in a backend chain MUST exist in `providers`
+4. **provider type**: Every provider config object MUST include a supported `type`
+5. **provider config**: Each provider class MUST validate its own required fields before execution
+6. **default_effort**: Must be in `["s", "m", "l"]`
+7. **max_output_tokens**: Must be positive integer
+8. **time_target**: Must be positive integer or null
+9. **max_context**: Must be positive integer
+10. **auto_compact_thresh**: Must be between 0.0 and 1.0
+11. **compact_target_words**: Must be positive integer
+12. **preserve_last_n_messages**: Must be non-negative integer
+13. **tokenizer_encoding**: Must be non-empty string
+14. **provider_timeout**: Must be positive integer
+15. **search_provider_retries / fetch_provider_retries**: Must be positive integers
 
 ---
 
@@ -855,30 +939,52 @@ The search loop terminates when **any** of these conditions are met:
 2. **Time target exceeded**: `elapsed >= time_target`
 3. **Max iterations reached**: `current_iteration >= max_iter`
 4. **Context limit exceeded**: After failed compaction
-5. **API error**: LLM API call fails after all retries
+5. **Provider chain exhaustion**: All configured LLM providers fail for the current request
 6. **User cancellation**: KeyboardInterrupt
 
 ### Tool Call Rules
 
 1. **web_search**:
-   - Must provide 1-5 queries
-   - Returns search results with snippets
-   - Does NOT trigger compaction (results are small)
-   - Captures titles for citation formatting
+    - Must provide 1-5 queries
+    - Returns search results with snippets
+    - Does NOT trigger compaction (results are small)
+    - Captures titles for citation formatting
+    - Retries failed queries inside the current provider before failover
+    - Fails over only remaining failed queries, not successful ones
 
 2. **web_get**:
-   - Must provide 1-8 URLs
-   - Returns extracted/summarized content
+    - Must provide 1-8 URLs
+    - Returns extracted/summarized content
    - TRIGGERS compaction check (results can be large)
-   - Supports `get_full` flag for raw content
-   - Supports `use_chunks` flag for chunk-based selection
-   - Supports custom `instructions` for extraction
-   - Assigns stable citation numbers to URLs
+    - Supports `get_full` flag for raw content
+    - Supports `use_chunks` flag for chunk-based selection
+    - Supports custom `instructions` for extraction
+    - Assigns stable citation numbers to URLs
+    - Retries failed URLs inside the current provider before failover
+    - Fails over only remaining failed URLs, not successful ones
 
 3. **final_answer**:
-   - Must provide answer string
-   - Terminates search loop immediately
-   - No further iterations
+    - Must provide answer string
+    - Terminates search loop immediately
+    - No further iterations
+
+### Provider Chain Rules
+
+1. **LLM Providers**:
+   - Evaluated in `llm_backends` order
+   - Hard provider failure marks that provider unhealthy for the current run
+   - Model-not-found is a hard provider failure
+   - The same iteration is retried against the next provider immediately
+
+2. **Search Providers**:
+   - Evaluated in `search_backends` order
+   - Per-provider retries apply before failover
+   - Successful query results are retained; only failed queries are re-routed
+
+3. **Fetch Providers**:
+   - Evaluated in `fetch_backends` order
+   - Per-provider retries apply before failover
+   - Successful URL fetches are retained; only failed URLs are re-routed
 
 ### Context Management Rules
 
@@ -941,7 +1047,7 @@ The search loop terminates when **any** of these conditions are met:
 - **Time target**: Return partial answer with timeout warning
 - **Max Iterations**: Request final answer from LLM
 - **Context Limit**: Return partial answer with context limit warning
-- **API Error (after retries)**: Return error message and exit
+- **Provider chain exhaustion**: Return error message and exit
 - **KeyboardInterrupt**: Cancel search and exit with code 130
 
 ### Tool Execution Errors
@@ -968,7 +1074,7 @@ The search loop terminates when **any** of these conditions are met:
 2. **web_get**: Executes 1-8 URL fetches in parallel via `asyncio.gather()`
 3. **LLM extraction**: Parallel extraction for multiple URLs
 4. **Chunk selection**: Parallel chunk selection for multiple URLs
-5. **Timeouts**: Configurable for Jina API (default: 30s), Reader (40s)
+5. **Timeouts**: Configurable per provider via `provider_timeout` and provider-specific config
 
 ### Caching
 
@@ -1003,12 +1109,12 @@ The search loop terminates when **any** of these conditions are met:
 
 - Stored in `~/.local/share/nexi/config.json`
 - File permissions: User-readable only (OS-dependent)
-- Jina key is optional (free tier available)
+- Provider credentials live inside `providers[provider_name]`
 - Never logged or printed in verbose mode
 
 ### URL Handling
 
-- URLs are validated by Jina AI services
+- URLs are handled by configured fetch providers
 - No arbitrary code execution
 - No file system access via URLs
 
@@ -1035,28 +1141,45 @@ The search loop terminates when **any** of these conditions are met:
 3. Add execution logic in `execute_tool()`
 4. Handle tool call in search loop
 
-### Pluggable Backends
+### Pluggable Providers
 
-NEXI supports swappable search backends and content fetchers:
+NEXI supports swappable provider chains for LLM, search, and fetch capabilities.
 
-1. **SearchBackend Protocol** (`nexi/tools.py`):
-   - Implement `search(queries, api_key, timeout, verbose)` method
-   - Return `{"searches": [{"query": str, "results": [...], "error": str}]}`
+1. **Provider Implementation**:
+   - Implement one or more provider protocols in `nexi/backends/`
+   - Provide `name`
+   - Provide `validate_config(config)`
+   - Provide capability methods such as `search()`, `fetch()`, or `complete()`
 
-2. **ContentFetcher Protocol** (`nexi/tools.py`):
-   - Implement `fetch(urls, api_key, timeout, verbose)` method  
-   - Return `{"pages": [{"url": str, "content": str, "error": str}]}`
+2. **Provider Registration**:
+   - Register the provider under its `type` for each supported capability
+   - Keep provider selection declarative through config, not hardcoded conditionals
 
-3. **Backend Selection**:
-   - Configure via `config.search_backend` and `config.content_fetcher`
-   - Currently defaults to "jina" (JinaSearchBackend + JinaContentFetcher)
+3. **Provider Configuration**:
+   - Add a config object under `providers[provider_name]`
+   - Set `providers[provider_name]["type"]` to the registered provider type
+   - Add the provider name to one or more ordered chains: `llm_backends`, `search_backends`, `fetch_backends`
 
-Example future configuration:
+Example configuration:
 ```python
 config = Config(
-    search_backend="tavily",
-    content_fetcher="jina",  # Keep Jina for fetch, swap search
-    api_keys={"tavily": "key123", "jina": "key456"},
+    llm_backends=["openrouter", "openai"],
+    search_backends=["jina"],
+    fetch_backends=["jina"],
+    providers={
+        "openrouter": {
+            "type": "openai_compatible",
+            "base_url": "https://openrouter.ai/api/v1",
+            "api_key": "key123",
+            "model": "google/gemini-2.5-flash-lite",
+        },
+        "openai": {
+            "type": "openai_compatible",
+            "base_url": "https://api.openai.com/v1",
+            "api_key": "key456",
+            "model": "gpt-4.1-mini",
+        },
+    },
     ...
 )
 ```
@@ -1148,7 +1271,8 @@ config = Config(
 - **Context Window**: Maximum tokens a model can process
 - **Effort Level**: Search depth (s=quick, m=balanced, l=deep)
 - **Function Calling**: OpenAI API feature for structured tool use
-- **Jina AI**: External service for web search and content extraction
+- **Provider Chain**: Ordered list of providers used for one capability with failover behavior
+- **Provider**: Named backend configuration and adapter that implements one or more capabilities
 - **JSONL**: JSON Lines format (one JSON object per line)
 - **LLM**: Large Language Model
 - **MCP**: Model Context Protocol
@@ -1164,7 +1288,6 @@ config = Config(
 ## References
 
 - **OpenAI API**: https://platform.openai.com/docs/api-reference
-- **Jina AI**: https://jina.ai/
 - **tiktoken**: https://github.com/openai/tiktoken
 - **MCP Protocol**: https://modelcontextprotocol.io/
 - **Click**: https://click.palletsprojects.com/

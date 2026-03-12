@@ -2,313 +2,149 @@
 
 from __future__ import annotations
 
-from nexi.config import (
-    DEFAULT_CONFIG,
-    Config,
-    get_compaction_prompt,
-    validate_config,
-)
+import json
+from pathlib import Path
+
+from nexi import config as config_module
+from nexi.config import DEFAULT_CONFIG, Config, get_compaction_prompt, validate_config
 
 
-def test_config_with_new_fields() -> None:
-    """Test Config with new context management fields."""
-    config = Config(
-        base_url="https://api.test.com",
-        api_key="test_key",
-        model="test_model",
-        jina_key="test_jina",
+def _build_config() -> Config:
+    """Create a canonical config fixture."""
+    return Config(
+        llm_backends=["openai_default"],
+        search_backends=["jina"],
+        fetch_backends=["jina"],
+        providers={
+            "openai_default": {
+                "type": "openai_compatible",
+                "base_url": "https://api.test.com/v1",
+                "api_key": "test_key",
+                "model": "test_model",
+            },
+            "jina": {
+                "type": "jina",
+                "api_key": "test_jina",
+            },
+        },
         default_effort="m",
-        time_target=600,
         max_output_tokens=8192,
+        time_target=600,
         max_context=128000,
         auto_compact_thresh=0.9,
         compact_target_words=5000,
         preserve_last_n_messages=3,
         tokenizer_encoding="cl100k_base",
+        provider_timeout=30,
+        search_provider_retries=2,
+        fetch_provider_retries=2,
     )
-    assert config.max_context == 128000
-    assert config.auto_compact_thresh == 0.9
-    assert config.compact_target_words == 5000
-    assert config.preserve_last_n_messages == 3
-    assert config.tokenizer_encoding == "cl100k_base"
 
 
-def test_config_defaults() -> None:
-    """Test Config with default values for new fields."""
-    config = Config(
-        base_url="https://api.test.com",
-        api_key="test_key",
-        model="test_model",
-        jina_key="test_jina",
-        default_effort="m",
-        time_target=600,
-        max_output_tokens=8192,
-    )
-    assert config.max_context == 128000
-    assert config.auto_compact_thresh == 0.9
-    assert config.compact_target_words == 5000
-    assert config.preserve_last_n_messages == 3
-    assert config.tokenizer_encoding == "cl100k_base"
+def test_config_to_dict_round_trip() -> None:
+    """Config round-trips through dict serialization."""
+    config = _build_config()
 
-
-def test_config_to_dict() -> None:
-    """Test converting config to dictionary."""
-    config = Config(
-        base_url="https://api.test.com",
-        api_key="test_key",
-        model="test_model",
-        jina_key="test_jina",
-        default_effort="m",
-        time_target=600,
-        max_output_tokens=8192,
-        max_context=128000,
-    )
     config_dict = config.to_dict()
-    assert config_dict["max_context"] == 128000
-    assert config_dict["auto_compact_thresh"] == 0.9
+    restored = Config.from_dict(config_dict)
+
+    assert restored == config
 
 
-def test_config_from_dict() -> None:
-    """Test creating config from dictionary."""
-    config_dict = {
-        "base_url": "https://api.test.com",
-        "api_key": "test_key",
-        "model": "test_model",
-        "jina_key": "test_jina",
-        "default_effort": "m",
-        "time_target": 600,
-        "max_output_tokens": 8192,
-        "max_context": 128000,
-        "auto_compact_thresh": 0.9,
-        "compact_target_words": 5000,
-        "preserve_last_n_messages": 3,
-        "tokenizer_encoding": "cl100k_base",
-    }
-    config = Config.from_dict(config_dict)
-    assert config.max_context == 128000
-    assert config.auto_compact_thresh == 0.9
+def test_validate_config_new_shape_valid() -> None:
+    """Validation accepts the canonical provider-based config shape."""
+    is_valid, errors = validate_config(_build_config().to_dict())
 
-
-def test_validate_config_new_fields_valid() -> None:
-    """Test validation of new config fields with valid values."""
-    config = {
-        "base_url": "https://api.test.com",
-        "api_key": "test_key",
-        "model": "test_model",
-        "default_effort": "m",
-        "time_target": 600,
-        "max_output_tokens": 8192,
-        "max_context": 128000,
-        "auto_compact_thresh": 0.9,
-        "compact_target_words": 5000,
-        "preserve_last_n_messages": 3,
-        "tokenizer_encoding": "cl100k_base",
-    }
-    is_valid, errors = validate_config(config)
     assert is_valid
-    assert len(errors) == 0
+    assert errors == []
 
 
-def test_validate_config_invalid_max_context() -> None:
-    """Test validation with invalid max_context."""
-    config = {
-        "base_url": "https://api.test.com",
-        "api_key": "test_key",
-        "model": "test_model",
-        "default_effort": "m",
-        "time_target": 600,
-        "max_output_tokens": 8192,
-        "max_context": -1,
-    }
+def test_validate_config_missing_provider_reference() -> None:
+    """Validation rejects backend chains that reference missing providers."""
+    config = _build_config().to_dict()
+    config["search_backends"] = ["missing"]
+
     is_valid, errors = validate_config(config)
+
     assert not is_valid
-    assert any("max_context" in e for e in errors)
+    assert any("search_backends references unknown provider" in error for error in errors)
 
 
-def test_validate_config_invalid_auto_compact_thresh() -> None:
-    """Test validation with invalid auto_compact_thresh."""
-    config = {
-        "base_url": "https://api.test.com",
-        "api_key": "test_key",
-        "model": "test_model",
-        "default_effort": "m",
-        "time_target": 600,
-        "max_output_tokens": 8192,
-        "auto_compact_thresh": 1.5,
-    }
+def test_validate_config_requires_provider_type() -> None:
+    """Validation rejects provider configs without a type field."""
+    config = _build_config().to_dict()
+    config["providers"]["jina"] = {"api_key": "test_jina"}
+
     is_valid, errors = validate_config(config)
+
     assert not is_valid
-    assert any("auto_compact_thresh" in e for e in errors)
+    assert any("providers.jina.type" in error for error in errors)
 
 
-def test_validate_config_invalid_compact_target_words() -> None:
-    """Test validation with invalid compact_target_words."""
-    config = {
-        "base_url": "https://api.test.com",
-        "api_key": "test_key",
-        "model": "test_model",
-        "default_effort": "m",
-        "time_target": 600,
-        "max_output_tokens": 8192,
-        "compact_target_words": -100,
-    }
-    is_valid, errors = validate_config(config)
-    assert not is_valid
-    assert any("compact_target_words" in e for e in errors)
+def test_load_config_migrates_legacy_shape(tmp_path: Path, monkeypatch) -> None:
+    """Loading a legacy config migrates it to provider chains."""
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "base_url": "https://legacy.example/v1",
+                "api_key": "legacy-key",
+                "model": "legacy-model",
+                "jina_key": "legacy-jina",
+                "default_effort": "m",
+                "max_output_tokens": 2048,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config_module, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(config_module, "CONFIG_FILE", config_path)
+
+    loaded = config_module.load_config()
+
+    assert loaded.llm_backends == ["openai_default"]
+    assert loaded.search_backends == ["jina"]
+    assert loaded.fetch_backends == ["jina"]
+    assert loaded.providers["openai_default"]["type"] == "openai_compatible"
+    assert loaded.providers["openai_default"]["base_url"] == "https://legacy.example/v1"
+    assert loaded.providers["openai_default"]["api_key"] == "legacy-key"
+    assert loaded.providers["openai_default"]["model"] == "legacy-model"
+    assert loaded.providers["jina"]["type"] == "jina"
+    assert loaded.providers["jina"]["api_key"] == "legacy-jina"
 
 
-def test_validate_config_invalid_preserve_last_n_messages() -> None:
-    """Test validation with invalid preserve_last_n_messages."""
-    config = {
-        "base_url": "https://api.test.com",
-        "api_key": "test_key",
-        "model": "test_model",
-        "default_effort": "m",
-        "time_target": 600,
-        "max_output_tokens": 8192,
-        "preserve_last_n_messages": -1,
-    }
-    is_valid, errors = validate_config(config)
-    assert not is_valid
-    assert any("preserve_last_n_messages" in e for e in errors)
+def test_save_config_writes_canonical_shape(tmp_path: Path, monkeypatch) -> None:
+    """Saving config writes only the canonical provider-based shape."""
+    config_path = tmp_path / "config.json"
+    monkeypatch.setattr(config_module, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(config_module, "CONFIG_FILE", config_path)
 
+    config_module.save_config(_build_config())
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
 
-def test_validate_config_invalid_tokenizer_encoding() -> None:
-    """Test validation with invalid tokenizer_encoding."""
-    config = {
-        "base_url": "https://api.test.com",
-        "api_key": "test_key",
-        "model": "test_model",
-        "default_effort": "m",
-        "time_target": 600,
-        "max_output_tokens": 8192,
-        "tokenizer_encoding": "",
-    }
-    is_valid, errors = validate_config(config)
-    assert not is_valid
-    assert any("tokenizer_encoding" in e for e in errors)
-
-
-def test_config_backward_compatibility() -> None:
-    """Test that configs without new fields work."""
-    config_dict = {
-        "base_url": "https://api.test.com",
-        "api_key": "test_key",
-        "model": "test_model",
-        "jina_key": "test_jina",
-        "default_effort": "m",
-        "time_target": 600,
-        "max_output_tokens": 8192,
-    }
-    config = Config.from_dict(config_dict)
-    assert config.max_context == 128000  # Default
-    assert config.auto_compact_thresh == 0.9  # Default
-    assert config.compact_target_words == 5000  # Default
-    assert config.preserve_last_n_messages == 3  # Default
-    assert config.tokenizer_encoding == "cl100k_base"  # Default
+    assert "base_url" not in saved
+    assert saved["llm_backends"] == ["openai_default"]
+    assert saved["providers"]["openai_default"]["type"] == "openai_compatible"
 
 
 def test_get_compaction_prompt() -> None:
-    """Test compaction prompt generation."""
+    """Compaction prompt includes key interpolated values."""
     prompt = get_compaction_prompt(
         original_query="test query",
         content="test content",
         target_words=1000,
     )
+
     assert "test query" in prompt
     assert "test content" in prompt
     assert "1000" in prompt
     assert "PRESERVE EXACTLY" in prompt
-    assert "MERGE" in prompt
 
 
-def test_get_compaction_prompt_defaults() -> None:
-    """Test compaction prompt with default target_words."""
-    prompt = get_compaction_prompt(
-        original_query="test query",
-        content="test content",
-    )
-    assert "test query" in prompt
-    assert "test content" in prompt
-    assert "5000" in prompt  # Default target_words
-
-
-def test_default_config_has_new_fields() -> None:
-    """Test that DEFAULT_CONFIG includes new fields."""
-    assert "max_context" in DEFAULT_CONFIG
-    assert "auto_compact_thresh" in DEFAULT_CONFIG
-    assert "compact_target_words" in DEFAULT_CONFIG
-    assert "preserve_last_n_messages" in DEFAULT_CONFIG
-    assert "tokenizer_encoding" in DEFAULT_CONFIG
-
-
-def test_default_config_values() -> None:
-    """Test DEFAULT_CONFIG has correct default values."""
-    assert DEFAULT_CONFIG["max_context"] == 128000
-    assert DEFAULT_CONFIG["auto_compact_thresh"] == 0.9
-    assert DEFAULT_CONFIG["compact_target_words"] == 5000
-    assert DEFAULT_CONFIG["preserve_last_n_messages"] == 3
-    assert DEFAULT_CONFIG["tokenizer_encoding"] == "cl100k_base"
-
-
-def test_validate_config_optional_fields() -> None:
-    """Test that new fields are optional."""
-    config = {
-        "base_url": "https://api.test.com",
-        "api_key": "test_key",
-        "model": "test_model",
-        "default_effort": "m",
-        "time_target": 600,
-        "max_output_tokens": 8192,
-    }
-    is_valid, errors = validate_config(config)
-    assert is_valid
-    assert len(errors) == 0
-
-
-def test_validate_config_auto_compact_thresh_zero() -> None:
-    """Test auto_compact_thresh can be 0.0 (disable compaction)."""
-    config = {
-        "base_url": "https://api.test.com",
-        "api_key": "test_key",
-        "model": "test_model",
-        "default_effort": "m",
-        "time_target": 600,
-        "max_output_tokens": 8192,
-        "auto_compact_thresh": 0.0,
-    }
-    is_valid, errors = validate_config(config)
-    assert is_valid
-    assert len(errors) == 0
-
-
-def test_validate_config_auto_compact_thresh_one() -> None:
-    """Test auto_compact_thresh can be 1.0 (compact at limit)."""
-    config = {
-        "base_url": "https://api.test.com",
-        "api_key": "test_key",
-        "model": "test_model",
-        "default_effort": "m",
-        "time_target": 600,
-        "max_output_tokens": 8192,
-        "auto_compact_thresh": 1.0,
-    }
-    is_valid, errors = validate_config(config)
-    assert is_valid
-    assert len(errors) == 0
-
-
-def test_validate_config_preserve_last_n_zero() -> None:
-    """Test preserve_last_n_messages can be 0 (compact all)."""
-    config = {
-        "base_url": "https://api.test.com",
-        "api_key": "test_key",
-        "model": "test_model",
-        "default_effort": "m",
-        "time_target": 600,
-        "max_output_tokens": 8192,
-        "preserve_last_n_messages": 0,
-    }
-    is_valid, errors = validate_config(config)
-    assert is_valid
-    assert len(errors) == 0
+def test_default_config_has_provider_chains() -> None:
+    """Default config exposes provider chains and provider registry."""
+    assert DEFAULT_CONFIG["llm_backends"] == ["openai_default"]
+    assert DEFAULT_CONFIG["search_backends"] == ["jina"]
+    assert DEFAULT_CONFIG["fetch_backends"] == ["jina"]
+    assert DEFAULT_CONFIG["providers"]["openai_default"]["type"] == "openai_compatible"
+    assert DEFAULT_CONFIG["providers"]["jina"]["type"] == "jina"

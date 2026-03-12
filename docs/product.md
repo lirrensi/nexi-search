@@ -6,7 +6,7 @@
 
 ## Overview
 
-NEXI is an intelligent web search CLI tool that uses an agentic search loop powered by Large Language Models (LLMs) to provide comprehensive, well-researched answers to user queries. It combines web search, content extraction, and intelligent synthesis to deliver high-quality responses with proper source attribution.
+NEXI is an intelligent research CLI built around an agentic search loop powered by Large Language Models (LLMs). It combines provider-orchestrated web search, content fetching, and intelligent synthesis to deliver high-quality responses with proper source attribution, while keeping each backend pluggable and replaceable.
 
 **Why NEXI exists:**
 
@@ -24,6 +24,8 @@ NEXI is an intelligent web search CLI tool that uses an agentic search loop powe
 - **Agentic Search Loop** — LLM autonomously decides what to search for and which pages to read
 - **Multi-Query Parallel Search** — Execute 1-5 search queries in parallel for efficiency
 - **Intelligent Content Extraction** — Three modes: full content, chunk-based selection, or LLM summarization
+- **Pluggable Provider Chains** — Search, fetch, and LLM backends are interchangeable and ordered by preference
+- **Automatic Failover** — Hard provider failures fall through to the next configured backend without aborting the workflow
 - **Automatic Context Management** — Prevents token overflow via intelligent conversation compaction
 - **Citation System** — Automatic source attribution with stable numbering throughout search
 - **Multi-Turn Conversations** — Interactive REPL mode with conversation history
@@ -34,13 +36,14 @@ NEXI is an intelligent web search CLI tool that uses an agentic search loop powe
 - **History Management** — Browse, view, and retrieve past searches
 - **Flexible Input** — Query via argument, stdin, or interactive REPL
 - **Script-Friendly** — Plain mode for piping and automation
+- **Direct Tool CLIs** — `nexi-search` and `nexi-fetch` expose the backend layer without the full agent loop
 - **Verbose Mode** — See all LLM calls, tool executions, and token usage
 
 ### Integration
 
 - **MCP Server** — Expose NEXI as a Model Context Protocol tool for Claude Desktop and other MCP clients
-- **OpenAI-Compatible API** — Works with any OpenAI-compatible endpoint (OpenRouter, local models, etc.)
-- **Jina AI Integration** — Web search and content extraction via Jina AI APIs
+- **Provider-Orchestrated LLM Access** — Works with multiple OpenAI-compatible providers via ordered fallback chains
+- **Provider-Orchestrated Search/Fetch** — Search and content retrieval providers can be mixed, reordered, and replaced independently
 
 ---
 
@@ -64,6 +67,14 @@ NEXI is an intelligent web search CLI tool that uses an agentic search loop powe
 │  │  3. Manage context (compact if needed)                   │  │
 │  │  4. Repeat until final_answer or limit reached           │  │
 │  └──────────────────────────────────────────────────────────┘  │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │            Provider Orchestration Layer                  │  │
+│  │  - llm_backends                                          │  │
+│  │  - search_backends                                       │  │
+│  │  - fetch_backends                                        │  │
+│  │  - provider validation + failover                        │  │
+│  └──────────────────────────────────────────────────────────┘  │
 └────────────────────┬────────────────────────────────────────────┘
                      │
          ┌───────────┼───────────┐
@@ -83,9 +94,10 @@ NEXI is an intelligent web search CLI tool that uses an agentic search loop powe
 ┌─────────────────────────────────────────────────────────────────┐
 │                     External Services                           │
 │  ┌──────────────────────┐      ┌──────────────────────────────┐ │
-│  │   LLM API            │      │   Jina AI Services           │ │
-│  │   (OpenAI-compatible)│      │  - s.jina.ai (Search)        │ │
-│  │                      │      │  - r.jina.ai (Reader)        │ │
+│  │   LLM Providers      │      │ Search / Fetch Providers     │ │
+│  │   (ordered chain)    │      │ (ordered chains)             │ │
+│  │ - OpenRouter         │      │ - Jina                       │ │
+│  │ - OpenAI-compatible  │      │ - Exa / Tavily / others      │ │
 │  └──────────────────────┘      └──────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -156,6 +168,28 @@ echo "what is the capital of france" | nexi --plain
 2. NEXI performs search
 3. Returns markdown-formatted answer with metadata
 
+### Flow 6: Direct Search Tool
+
+```bash
+nexi-search "rust async trait objects"
+```
+
+1. User or agent calls the direct search binary
+2. NEXI executes the configured search backend chain
+3. Failed queries retry within the active provider, then fall through to the next provider
+4. Plain text or JSON results are written to stdout
+
+### Flow 7: Direct Fetch Tool
+
+```bash
+nexi-fetch "https://example.com/spec"
+```
+
+1. User or agent calls the direct fetch binary
+2. NEXI executes the configured fetch backend chain
+3. Failed URLs retry within the active provider, then fall through to the next provider
+4. Extracted content is written to stdout and can be piped to files or other tools
+
 ---
 
 ## CLI Commands
@@ -173,6 +207,15 @@ echo "what is the capital of france" | nexi --plain
 | `nexi --max-len N "query"` | Limit output tokens |
 | `nexi -v "query"` | Verbose mode (show all LLM calls) |
 | `nexi --plain "query"` | No colors/emoji (scripting) |
+
+### Direct Tool Commands
+
+| Command | Description |
+|---------|-------------|
+| `nexi-search "query"` | Run direct search without the agentic loop |
+| `nexi-search --json "query"` | Return structured search results for scripts/agents |
+| `nexi-fetch "url"` | Fetch/extract content from one or more URLs |
+| `nexi-fetch --json "url"` | Return structured fetch results for scripts/agents |
 
 ### History Commands
 
@@ -231,9 +274,19 @@ The search loop **MUST** terminate when **any** of these conditions are met:
 ### Error Handling
 
 - Individual tool failures do not abort search — errors returned in results
-- LLM API calls retry with exponential backoff (default: 3 retries)
+- Search and fetch retry failed items within the active provider before failing over
+- LLM provider failures trigger immediate provider failover for the current run
+- If a listed provider is missing required config, validation fails before execution
+- Search and fetch provider retries use exponential backoff before failover
 - Network errors are caught and reported, search continues
 - Keyboard interrupt gracefully exits with code 130
+
+### Provider Failover
+
+- `search_backends`, `fetch_backends`, and `llm_backends` are ordered lists
+- Search and fetch preserve successful items and only re-route failed queries or URLs
+- LLM failover happens on the first hard provider failure or model-not-found response
+- Provider failures are surfaced in logs/output so dead or unpaid providers are visible
 
 ---
 
@@ -243,9 +296,10 @@ The search loop **MUST** terminate when **any** of these conditions are met:
 
 | Field | Description |
 |-------|-------------|
-| `base_url` | LLM API endpoint (OpenAI-compatible) |
-| `api_key` | LLM API key |
-| `model` | Model name (e.g., `google/gemini-2.5-flash-lite`) |
+| `llm_backends` | Ordered LLM provider chain for the full `nexi` workflow |
+| `search_backends` | Ordered search provider chain |
+| `fetch_backends` | Ordered fetch provider chain |
+| `providers` | Provider config objects keyed by provider instance name |
 | `default_effort` | Default effort level: `s`, `m`, or `l` |
 | `max_output_tokens` | Maximum tokens in final answer |
 
@@ -253,15 +307,48 @@ The search loop **MUST** terminate when **any** of these conditions are met:
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `jina_key` | `""` | Jina AI API key (free tier available) |
 | `time_target` | `null` | Soft time limit in seconds |
 | `max_context` | `128000` | Model's context window limit |
 | `auto_compact_thresh` | `0.9` | Trigger compaction at this fraction |
 | `compact_target_words` | `5000` | Target word count for summaries |
 | `preserve_last_n_messages` | `3` | Recent messages to keep un-compacted |
 | `tokenizer_encoding` | `cl100k_base` | tiktoken encoding name |
-| `jina_timeout` | `30` | Timeout for Jina API calls |
-| `llm_max_retries` | `3` | Max retry attempts for LLM API |
+| `provider_timeout` | `30` | Default timeout for provider API calls |
+| `search_provider_retries` | `2` | Retry attempts per search provider before failover |
+| `fetch_provider_retries` | `2` | Retry attempts per fetch provider before failover |
+
+### Provider Configuration Shape
+
+```json
+{
+  "llm_backends": ["openrouter", "openai"],
+  "search_backends": ["jina"],
+  "fetch_backends": ["jina"],
+  "providers": {
+    "openrouter": {
+      "type": "openai_compatible",
+      "base_url": "https://openrouter.ai/api/v1",
+      "api_key": "<api_key>",
+      "model": "google/gemini-2.5-flash-lite"
+    },
+    "jina": {
+      "type": "jina",
+      "api_key": "<api_key>"
+    },
+    "openai": {
+      "type": "openai_compatible",
+      "base_url": "https://api.openai.com/v1",
+      "api_key": "<api_key>",
+      "model": "gpt-4.1-mini"
+    }
+  }
+}
+```
+
+- Each listed backend name MUST have a matching entry in `providers`
+- Each provider config object MUST declare its provider `type`
+- Each provider class validates its own config requirements
+- Providers MAY define additional provider-specific settings inside their config object
 
 ### Config File Location
 
@@ -325,7 +412,7 @@ NEXI deliberately does **NOT** aim to be:
 
 - **A general-purpose chatbot** — Focused on web search, not open-ended conversation
 - **A web browser** — No JavaScript rendering, no interactive browsing
-- **A search engine** — Relies on Jina AI for search, doesn't crawl the web
+- **A search engine** — Orchestrates third-party providers, doesn't crawl the web itself
 - **A citation manager** — Basic citations only, no BibTeX or academic formatting
 - **A research paper writer** — Provides answers, doesn't generate papers
 - **A replacement for human research** — Tool for assistance, not autonomous research
@@ -348,8 +435,8 @@ NEXI deliberately does **NOT** aim to be:
 
 | Issue | Solution |
 |-------|----------|
-| 401 Unauthorized | Check API keys in config |
-| 429 Rate Limit | Wait or switch to different model |
+| 401 Unauthorized | Check provider config and API keys |
+| 429 Rate Limit | Wait or rely on the next configured provider |
 | Time target hit | Increase `time_target` or use `--time-target` |
 | Context limit exceeded | Increase `max_context` or lower `auto_compact_thresh` |
 | UTF-8 garbled (Windows) | Use `--plain` or Windows Terminal |
@@ -361,5 +448,4 @@ NEXI deliberately does **NOT** aim to be:
 
 - **Architecture**: [arch.md](arch.md) — Complete technical specification
 - **MCP Server**: [MCP_SERVER.md](MCP_SERVER.md) — MCP integration details
-- **Jina AI**: https://jina.ai — Search and content extraction APIs
 - **OpenAI API**: https://platform.openai.com/docs/api-reference — LLM API reference

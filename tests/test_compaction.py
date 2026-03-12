@@ -11,70 +11,57 @@ from nexi.compaction import (
 from nexi.config import Config
 
 
-def test_should_compact_true() -> None:
-    """Test compaction trigger when threshold exceeded."""
-    config = Config(
-        base_url="https://api.test.com",
-        api_key="test_key",
-        model="test_model",
-        jina_key="test_jina",
+def _build_config() -> Config:
+    """Create a canonical config fixture."""
+    return Config(
+        llm_backends=["openai_default"],
+        search_backends=["jina"],
+        fetch_backends=["jina"],
+        providers={
+            "openai_default": {
+                "type": "openai_compatible",
+                "base_url": "https://api.test.com/v1",
+                "api_key": "test_key",
+                "model": "test_model",
+            },
+            "jina": {
+                "type": "jina",
+                "api_key": "test_jina",
+            },
+        },
         default_effort="m",
         time_target=600,
         max_output_tokens=8192,
         max_context=100000,
         auto_compact_thresh=0.9,
     )
+
+
+def test_should_compact_true() -> None:
+    """Test compaction trigger when threshold exceeded."""
+    config = _build_config()
     # 90000 + 10000 = 100000 > 90000 (threshold)
     assert should_compact(90000, 10000, config)
 
 
 def test_should_compact_false() -> None:
     """Test no compaction when threshold not exceeded."""
-    config = Config(
-        base_url="https://api.test.com",
-        api_key="test_key",
-        model="test_model",
-        jina_key="test_jina",
-        default_effort="m",
-        time_target=600,
-        max_output_tokens=8192,
-        max_context=100000,
-        auto_compact_thresh=0.9,
-    )
+    config = _build_config()
     # 80000 + 5000 = 85000 < 90000 (threshold)
     assert not should_compact(80000, 5000, config)
 
 
 def test_should_compact_at_threshold() -> None:
     """Test compaction at exact threshold."""
-    config = Config(
-        base_url="https://api.test.com",
-        api_key="test_key",
-        model="test_model",
-        jina_key="test_jina",
-        default_effort="m",
-        time_target=600,
-        max_output_tokens=8192,
-        max_context=100000,
-        auto_compact_thresh=0.9,
-    )
+    config = _build_config()
     # 90000 + 1 = 90001 > 90000 (threshold)
     assert should_compact(90000, 1, config)
 
 
 def test_should_compact_disabled() -> None:
     """Test compaction disabled when threshold is 1.0."""
-    config = Config(
-        base_url="https://api.test.com",
-        api_key="test_key",
-        model="test_model",
-        jina_key="test_jina",
-        default_effort="m",
-        time_target=600,
-        max_output_tokens=8192,
-        max_context=100000,
-        auto_compact_thresh=1.0,
-    )
+    config = _build_config()
+    config.auto_compact_thresh = 1.0
     # 90000 + 5000 = 95000 < 100000 (threshold)
     assert not should_compact(90000, 5000, config)
 

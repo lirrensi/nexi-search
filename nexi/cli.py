@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +12,6 @@ import click
 
 from nexi.config import (
     CONTINUATION_SYSTEM_PROMPT,
-    Config,
     ensure_config,
     get_config_path,
 )
@@ -187,16 +187,11 @@ def _run_search_command(
     search_max_tokens = max_len if max_len is not None else config.max_output_tokens
 
     # Create temporary config with overrides
-    search_config = Config(
-        base_url=config.base_url,
-        api_key=config.api_key,
-        model=config.model,
-        jina_key=config.jina_key,
+    search_config = replace(
+        config,
         default_effort=search_effort,
         time_target=search_time_target,
         max_output_tokens=search_max_tokens,
-        jina_timeout=config.jina_timeout,
-        llm_max_retries=config.llm_max_retries,
     )
 
     # Determine if we should use compact mode (non-TTY and not verbose)

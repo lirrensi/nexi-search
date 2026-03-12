@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import re
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any
 
-import httpx
-from openai import AsyncOpenAI
-
-from nexi.config import CHUNK_SELECTOR_PROMPT, EXTRACTOR_PROMPT_TEMPLATE
+from nexi.backends.jina import clear_url_cache, close_http_client, get_http_client
+from nexi.backends.orchestrators import run_fetch_chain, run_llm_chain, run_search_chain
+from nexi.config import CHUNK_SELECTOR_PROMPT, EXTRACTOR_PROMPT_TEMPLATE, Config
 
 
 @dataclass
@@ -28,36 +26,26 @@ class Chunk:
         self.word_count = len(self.content.split())
 
     def __str__(self) -> str:
-        return f"[CHUNK {self.number}] ({self.char_count} chars, {self.word_count} words)\n{self.content}"
+        return (
+            f"[CHUNK {self.number}] ({self.char_count} chars, {self.word_count} words)\n"
+            f"{self.content}"
+        )
 
 
 def create_logical_chunks(md: str, target_chars: int = 480, max_chars: int = 720) -> list[Chunk]:
-    """Heading-aware logical chunking for clean Jina Markdown.
-
-    Respects headings, merges small paragraphs, splits oversized chunks.
-
-    Args:
-        md: Markdown content
-        target_chars: Target chars per chunk
-        max_chars: Max chars before forcing split
-
-    Returns:
-        List of Chunk objects
-    """
+    """Heading-aware logical chunking for clean provider markdown."""
     if len(md) < 300:
         return [Chunk(number=1, content=md.strip())]
 
-    # Split while keeping headings with their content
     segments = re.split(r"(^#{1,6}\s+.+$)", md, flags=re.MULTILINE)
+    chunks: list[str] = []
+    current: list[str] = []
 
-    chunks = []
-    current = []
-
-    for seg in segments:
-        seg = seg.strip()
-        if not seg:
+    for segment in segments:
+        segment = segment.strip()
+        if not segment:
             continue
-        current.append(seg)
+        current.append(segment)
 
         combined = "\n\n".join(current)
         if len(combined) > max_chars and len(current) > 1:
@@ -67,278 +55,58 @@ def create_logical_chunks(md: str, target_chars: int = 480, max_chars: int = 720
     if current:
         chunks.append("\n\n".join(current))
 
-    # Final gentle merge of any tiny leftover chunks
-    final = []
+    merged: list[str] = []
     for chunk in chunks:
         chunk = chunk.strip()
         if not chunk:
             continue
-        if final and len(final[-1]) + len(chunk) < target_chars * 1.6:
-            final[-1] += "\n\n" + chunk
+        if merged and len(merged[-1]) + len(chunk) < target_chars * 1.6:
+            merged[-1] += "\n\n" + chunk
         else:
-            final.append(chunk)
+            merged.append(chunk)
 
-    # Split oversized chunks at paragraph boundaries
-    refined = []
-    for chunk in final:
+    refined: list[str] = []
+    for chunk in merged:
         if len(chunk) <= max_chars:
             refined.append(chunk)
-        else:
-            paras = chunk.split("\n\n")
-            sub_chunk = []
-            for para in paras:
-                para = para.strip()
-                if not para:
-                    continue
-                if len("\n\n".join(sub_chunk + [para])) > max_chars and sub_chunk:
-                    refined.append("\n\n".join(sub_chunk))
-                    sub_chunk = [para]
-                else:
-                    sub_chunk.append(para)
-            if sub_chunk:
+            continue
+
+        paragraphs = chunk.split("\n\n")
+        sub_chunk: list[str] = []
+        for paragraph in paragraphs:
+            paragraph = paragraph.strip()
+            if not paragraph:
+                continue
+            candidate = "\n\n".join(sub_chunk + [paragraph])
+            if len(candidate) > max_chars and sub_chunk:
                 refined.append("\n\n".join(sub_chunk))
-
-    return [Chunk(number=i + 1, content=c) for i, c in enumerate(refined)]
-
-
-# ===== Backend Implementations =====
-
-
-class JinaSearchBackend:
-    """Jina AI search backend implementation."""
-
-    async def search(
-        self,
-        queries: list[str],
-        api_key: str,
-        timeout: float,
-        verbose: bool,
-    ) -> dict[str, Any]:
-        """Execute search via Jina AI."""
-        results = []
-
-        if verbose:
-            print(f"[Jina Search] Starting {len(queries)} parallel searches...")
-
-        client = get_http_client(timeout=timeout)
-
-        # Create tasks for parallel execution
-        tasks = []
-        for query in queries:
-            task = _search_single(client, query, api_key, verbose)
-            tasks.append(task)
-
-        # Execute all searches in parallel
-        search_results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        for query, result in zip(queries, search_results, strict=False):
-            if isinstance(result, Exception):
-                error_msg = str(result)
-                if verbose:
-                    print(f"  [Jina Search] Exception: {error_msg}")
-                results.append(
-                    {
-                        "query": query,
-                        "error": error_msg,
-                        "results": [],
-                    }
-                )
+                sub_chunk = [paragraph]
             else:
-                results.append(result)
+                sub_chunk.append(paragraph)
+        if sub_chunk:
+            refined.append("\n\n".join(sub_chunk))
 
-        if verbose:
-            print(f"[Jina Search] Completed {len(results)} searches")
-
-        return {"searches": results}
-
-
-class JinaContentFetcher:
-    """Jina AI content fetcher backend implementation."""
-
-    async def fetch(
-        self,
-        urls: list[str],
-        api_key: str,
-        timeout: float,
-        verbose: bool,
-    ) -> dict[str, Any]:
-        """Fetch content via Jina Reader."""
-        contents = []
-
-        if verbose:
-            print(f"[Jina Reader] Starting {len(urls)} parallel fetches...")
-
-        client = get_http_client(timeout=timeout)
-
-        # Create tasks for parallel execution (only for URLs not in cache)
-        tasks = []
-        urls_to_fetch = []
-        for url in urls:
-            if url in _url_cache:
-                if verbose:
-                    print(f"  [Jina Reader] Cache hit for: {url}")
-            else:
-                urls_to_fetch.append(url)
-                task = _get_single(client, url, api_key, verbose)
-                tasks.append(task)
-
-        # Execute all fetches in parallel
-        fetch_results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # Process newly fetched URLs and update cache
-        fetched_urls_with_content = []
-        for url, result in zip(urls_to_fetch, fetch_results, strict=False):
-            if isinstance(result, Exception):
-                error_msg = str(result)
-                if verbose:
-                    print(f"  [Jina Reader] Exception: {error_msg}")
-                contents.append(
-                    {
-                        "url": url,
-                        "error": error_msg,
-                        "content": "",
-                    }
-                )
-            else:
-                raw_content = result.get("content", "") if isinstance(result, dict) else ""
-                # Only cache successful fetches with non-empty content
-                # Don't poison cache with transient failures
-                if raw_content and "error" not in (result if isinstance(result, dict) else {}):
-                    _url_cache[url] = raw_content
-                fetched_urls_with_content.append((url, raw_content))
-
-        # Process cached URLs
-        cached_urls_with_content = []
-        for url in urls:
-            if url in _url_cache and url not in urls_to_fetch:
-                raw_content = _url_cache[url]
-                cached_urls_with_content.append((url, raw_content))
-
-        # Build contents list from all URLs (fetched + cached)
-        all_urls_with_content = fetched_urls_with_content + cached_urls_with_content
-        for url, raw_content in all_urls_with_content:
-            contents.append(
-                {
-                    "url": url,
-                    "content": raw_content,
-                }
-            )
-
-        if verbose:
-            print(f"[Jina Reader] Completed {len(contents)} fetches")
-
-        return {"pages": contents}
-
-
-# In-memory cache for fetched URLs: {url: raw_content}
-_url_cache: dict[str, str] = {}
-
-# Shared HTTP client for connection pooling
-_http_client: httpx.AsyncClient | None = None
-
-
-def clear_url_cache() -> None:
-    """Clear the URL cache (call at start of each search session)."""
-    global _url_cache
-    _url_cache.clear()
-
-
-def get_http_client(timeout: float = 30.0) -> httpx.AsyncClient:
-    """Get or create shared HTTP client with connection pooling.
-
-    Args:
-        timeout: Request timeout in seconds
-
-    Returns:
-        Shared httpx.AsyncClient instance
-    """
-    global _http_client
-    if _http_client is None:
-        limits = httpx.Limits(max_connections=10, max_keepalive_connections=5)
-        _http_client = httpx.AsyncClient(timeout=timeout, limits=limits)
-    return _http_client
-
-
-async def close_http_client() -> None:
-    """Close the shared HTTP client."""
-    global _http_client
-    if _http_client is not None:
-        await _http_client.aclose()
-        _http_client = None
-
-
-# ===== Backend Protocols =====
-
-
-class SearchBackend(Protocol):
-    """Protocol for search backend implementations."""
-
-    async def search(
-        self,
-        queries: list[str],
-        api_key: str,
-        timeout: float,
-        verbose: bool,
-    ) -> dict[str, Any]:
-        """Execute search queries.
-
-        Args:
-            queries: List of search queries (1-5)
-            api_key: API key for the backend service
-            timeout: Request timeout in seconds
-            verbose: Show detailed logs
-
-        Returns:
-            Dict with key "searches": list[dict] where each dict has:
-            - "query": str
-            - "results": list[dict] with "title", "url", "description"
-            - "error": str (if failed)
-        """
-        ...
-
-
-class ContentFetcher(Protocol):
-    """Protocol for content fetcher implementations."""
-
-    async def fetch(
-        self,
-        urls: list[str],
-        api_key: str,
-        timeout: float,
-        verbose: bool,
-    ) -> dict[str, Any]:
-        """Fetch content from URLs.
-
-        Args:
-            urls: List of URLs to fetch (1-8)
-            api_key: API key for the backend service
-            timeout: Request timeout in seconds
-            verbose: Show detailed logs
-
-        Returns:
-            Dict with key "pages": list[dict] where each dict has:
-            - "url": str
-            - "content": str (markdown content)
-            - "error": str (if failed)
-        """
-        ...
+    return [Chunk(number=index + 1, content=chunk) for index, chunk in enumerate(refined)]
 
 
 __all__ = [
+    "TOOLS",
     "clear_url_cache",
+    "close_http_client",
+    "create_logical_chunks",
     "execute_tool",
-    "web_search",
+    "get_http_client",
     "web_get",
+    "web_search",
 ]
 
 
-# Tool schemas for LLM function calling
 TOOLS = [
     {
         "type": "function",
         "function": {
             "name": "web_search",
-            "description": "Search the web using Jina AI. Supports multiple parallel queries for efficient research. Returns snippets and URLs.",
+            "description": "Search the web using the configured provider chain. Supports multiple parallel queries and returns snippets and URLs.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -358,7 +126,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "web_get",
-            "description": "Fetch and process content from URLs using Jina Reader. Automatically converts PDFs, HTML to clean markdown. Supports multiple URLs in parallel. Three modes: (1) get_full=true: raw page content, (2) use_chunks=true: smart chunk selection - splits page into chunks, LLM picks relevant ones, preserves original text (cheaper, no info loss), (3) default: LLM summarizes based on instructions.",
+            "description": "Fetch and process content from URLs using the configured fetch provider chain. Supports full content, chunk selection, or LLM extraction.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -371,7 +139,7 @@ TOOLS = [
                     },
                     "instructions": {
                         "type": "string",
-                        "description": "Custom prompt guiding the LLM summarizer on what to look for. Make instructions explicit, self-contained, and dense. Only used when get_full=false and use_chunks=false.",
+                        "description": "Custom prompt guiding the LLM summarizer on what to look for. Only used when get_full=false and use_chunks=false.",
                     },
                     "get_full": {
                         "type": "boolean",
@@ -380,7 +148,7 @@ TOOLS = [
                     },
                     "use_chunks": {
                         "type": "boolean",
-                        "description": "If true, splits page into logical chunks, asks LLM for relevant chunk numbers, and returns only those chunks. Preserves original text, cheaper than summarization. Good for detailed research.",
+                        "description": "If true, splits page into logical chunks, asks LLM for relevant chunk numbers, and returns only those chunks.",
                         "default": False,
                     },
                 },
@@ -409,513 +177,193 @@ TOOLS = [
 
 
 async def web_search(
-    queries: list[str], jina_key: str, verbose: bool = False, timeout: int = 30
+    queries: list[str],
+    config: Config,
+    verbose: bool = False,
 ) -> dict[str, Any]:
-    """Search the web using configurable search backend.
-
-    Args:
-        queries: List of search queries (1-5)
-        jina_key: Jina AI API key (passed for backward compatibility)
-        verbose: Show detailed logs
-        timeout: Timeout in seconds for API calls (default: 30)
-
-    Returns:
-        Dictionary with search results
-    """
-    # Use JinaSearchBackend (future: load based on config)
-    backend = JinaSearchBackend()
-    return await backend.search(
-        queries=queries,
-        api_key=jina_key,
-        timeout=float(timeout),
-        verbose=verbose,
-    )
-
-
-async def _search_single(
-    client: httpx.AsyncClient, query: str, jina_key: str, verbose: bool = False
-) -> dict[str, Any]:
-    """Execute a single search query."""
-    headers = {}
-    if jina_key:
-        headers["Authorization"] = f"Bearer {jina_key}"
-
-    if verbose:
-        print(f"  [Jina Search] Query: {query}")
-        print(f"  [Jina Search] URL: https://s.jina.ai/?q={query}")
-        print(f"  [Jina Search] Headers: {headers}")
-
-    response = None
-    try:
-        response = await client.get(
-            "https://s.jina.ai/",
-            params={"q": query},
-            headers=headers,
-        )
-        response.raise_for_status()
-
-        # Parse response - Jina returns text format, not JSON
-        raw_text = response.text
-        if verbose:
-            print(f"  [Jina Search] Status: {response.status_code}")
-            print(f"  [Jina Search] Raw response (first 500 chars): {raw_text[:500]}")
-
-        # Try to parse as JSON first (for backward compatibility)
-        try:
-            data = response.json()
-            if verbose:
-                print("  [Jina Search] Parsed as JSON")
-            return {
-                "query": query,
-                "results": data if isinstance(data, list) else [data],
-            }
-        except Exception:
-            # If JSON parsing fails, parse the text format
-            if verbose:
-                print("  [Jina Search] Parsing as text format")
-
-            # Parse text format: [1] Title: ... [1] URL Source: ... [1] Description: ...
-            results = []
-            lines = raw_text.split("\n")
-            current_result = {}
-
-            for line in lines:
-                line = line.strip()
-                if not line:
-                    continue
-
-                # Check for new result marker
-                if line.startswith("[") and "] Title:" in line:
-                    # Save previous result if exists
-                    if current_result:
-                        results.append(current_result)
-                    # Start new result
-                    current_result = {}
-                    # Extract title
-                    title_part = line.split("] Title: ", 1)
-                    if len(title_part) > 1:
-                        current_result["title"] = title_part[1].strip()
-                elif "] URL Source:" in line:
-                    url_part = line.split("] URL Source: ", 1)
-                    if len(url_part) > 1:
-                        current_result["url"] = url_part[1].strip()
-                elif "] Description:" in line:
-                    desc_part = line.split("] Description: ", 1)
-                    if len(desc_part) > 1:
-                        current_result["description"] = desc_part[1].strip()
-                elif "] Published Time:" in line:
-                    time_part = line.split("] Published Time: ", 1)
-                    if len(time_part) > 1:
-                        current_result["published_time"] = time_part[1].strip()
-
-            # Add last result
-            if current_result:
-                results.append(current_result)
-
-            if verbose:
-                print(f"  [Jina Search] Parsed {len(results)} results from text format")
-
-            return {
-                "query": query,
-                "results": results,
-            }
-
-    except httpx.HTTPStatusError as e:
-        error_msg = f"HTTP {e.response.status_code}: {e.response.text}"
-        if verbose:
-            print(f"  [Jina Search] ERROR: {error_msg}")
-        return {
-            "query": query,
-            "error": error_msg,
-            "results": [],
-        }
-    except Exception as e:
-        error_msg = str(e)
-        if verbose:
-            print(f"  [Jina Search] ERROR: {error_msg}")
-            # Try to show raw response if available
-            if response:
-                with contextlib.suppress(BaseException):
-                    print(f"  [Jina Search] Raw response: {response.text[:500]}")
-        return {
-            "query": query,
-            "error": error_msg,
-            "results": [],
-        }
+    """Search the web using the configured provider chain."""
+    return await run_search_chain(queries, config, verbose)
 
 
 async def web_get(
     urls: list[str],
-    jina_key: str,
+    config: Config,
     verbose: bool = False,
     instructions: str = "",
     get_full: bool = False,
     use_chunks: bool = False,
-    llm_client: AsyncOpenAI | None = None,
-    llm_model: str | None = None,
     query: str = "",
-    timeout: int = 30,
     url_numbers: dict[str, int] | None = None,
     url_titles: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Fetch and extract content from URLs using configurable content fetcher + LLM.
+    """Fetch and process content from URLs using configured providers."""
+    raw_result = await run_fetch_chain(urls, config, verbose)
+    pages_by_url = {
+        page["url"]: page
+        for page in raw_result.get("pages", [])
+        if isinstance(page, dict) and isinstance(page.get("url"), str)
+    }
 
-    Three modes:
-    - get_full=True: Return raw content without processing
-    - use_chunks=True: Split into chunks, LLM picks relevant ones, return selected chunks
-    - default: LLM summarizes based on instructions
-
-    Args:
-        urls: List of URLs to fetch (1-8)
-        jina_key: Jina AI API key (passed for backward compatibility)
-        verbose: Show detailed logs
-        instructions: Custom prompt for LLM extraction (used when get_full=False, use_chunks=False)
-        get_full: If True, return raw content without LLM processing
-        use_chunks: If True, use chunk-based selection instead of summarization
-        llm_client: OpenAI client for LLM processing
-        llm_model: Model name for LLM processing
-        query: Original search query for context
-        timeout: Timeout in seconds for API calls (default: 30)
-        url_numbers: URL -> citation number mapping
-        url_titles: URL -> title mapping
-
-    Returns:
-        Dictionary with page contents, formatted as [link]\n---\n[content]
-    """
-    # Use JinaContentFetcher to get raw markdown (future: load based on config)
-    fetcher = JinaContentFetcher()
-    raw_result = await fetcher.fetch(
-        urls=urls,
-        api_key=jina_key,
-        timeout=float(timeout),
-        verbose=verbose,
-    )
-
-    # Build url -> content map from fetcher result
-    url_to_raw_content: dict[str, str] = {}
-    for page in raw_result.get("pages", []):
-        url_to_raw_content[page["url"]] = page.get("content", "")
-
-    # Get raw content for all URLs (from fetcher result)
-    all_urls_with_content = [
-        (url, url_to_raw_content.get(url, "")) for url in urls if url in url_to_raw_content
+    contents: list[dict[str, Any]] = []
+    urls_with_content = [
+        (url, pages_by_url[url].get("content", ""))
+        for url in urls
+        if url in pages_by_url and not pages_by_url[url].get("error")
     ]
 
-    # Initialize contents list with errors for URLs that failed to fetch
-    contents = []
-    for page in raw_result.get("pages", []):
-        if "error" in page:
-            contents.append(
-                {
-                    "url": page["url"],
-                    "error": page["error"],
-                    "content": "",
-                }
-            )
+    for url in urls:
+        page = pages_by_url.get(url)
+        if not page or not page.get("error"):
+            continue
+        contents.append({"url": url, "error": page["error"], "content": ""})
 
     if verbose:
-        print(f"[Jina Reader] Starting {len(urls)} parallel fetches...")
+        print(f"[Fetch] Starting {len(urls)} fetches...")
         if use_chunks:
-            print(f"[Jina Reader] Chunk-based selection enabled (model: {llm_model})")
+            print("[Fetch] Chunk-based selection enabled")
         elif not get_full:
-            print(f"[Jina Reader] LLM extraction enabled (model: {llm_model})")
+            print("[Fetch] LLM extraction enabled")
 
-    if use_chunks and all_urls_with_content and llm_client and llm_model:
-        # Chunk-based selection mode
-        if verbose:
-            print(f"[Jina Reader] Running chunk selection for {len(all_urls_with_content)} URLs...")
-
-        # Create chunk selection tasks
-        chunk_tasks = []
-        for url, raw_content in all_urls_with_content:
-            task = _select_chunks_with_llm(
-                llm_client,
-                llm_model,
-                raw_content,
-                query,
-                verbose,
-            )
-            chunk_tasks.append((url, task))
-
-        # Execute all chunk selections in parallel
+    if use_chunks and urls_with_content:
         chunk_results = await asyncio.gather(
-            *[task for _, task in chunk_tasks], return_exceptions=True
+            *[
+                _select_chunks_with_llm(
+                    config=config,
+                    content=raw_content,
+                    query=query,
+                    verbose=verbose,
+                )
+                for _, raw_content in urls_with_content
+            ],
+            return_exceptions=True,
         )
-
-        # Build contents list with selected chunks
-        for (url, _), result in zip(chunk_tasks, chunk_results, strict=False):
-            if isinstance(result, Exception):
-                error_msg = str(result)
-                if verbose:
-                    print(f"  [Jina Reader] Chunk selection error for {url}: {error_msg}")
-                contents.append(
-                    {
-                        "url": url,
-                        "error": error_msg,
-                        "content": "",
-                    }
-                )
-            else:
-                citation_num = url_numbers.get(url) if url_numbers else None
-                if citation_num:
-                    formatted_content = f"[{citation_num}] {url}\n---\n{result}"
-                else:
-                    formatted_content = f"{url}\n---\n{result}"
-                contents.append(
-                    {
-                        "url": url,
-                        "content": formatted_content,
-                    }
-                )
-    elif all_urls_with_content and not get_full and llm_client and llm_model:
-        if verbose:
-            print(
-                f"[Jina Reader] Running parallel LLM extraction for {len(all_urls_with_content)} URLs..."
-            )
-
-        # Create extraction tasks
-        extraction_tasks = []
-        for url, raw_content in all_urls_with_content:
-            task = _extract_with_llm(
-                llm_client,
-                llm_model,
-                raw_content,
-                query,
-                instructions,
-                verbose,
-            )
-            extraction_tasks.append((url, task))
-
-        # Execute all extractions in parallel
+        for (url, _), result in zip(urls_with_content, chunk_results, strict=False):
+            if isinstance(result, BaseException):
+                contents.append({"url": url, "error": str(result), "content": ""})
+                continue
+            contents.append({"url": url, "content": _format_page_content(url, result, url_numbers)})
+    elif not get_full and urls_with_content:
         extraction_results = await asyncio.gather(
-            *[task for _, task in extraction_tasks], return_exceptions=True
+            *[
+                _extract_with_llm(
+                    config=config,
+                    content=raw_content,
+                    query=query,
+                    instructions=instructions,
+                    verbose=verbose,
+                )
+                for _, raw_content in urls_with_content
+            ],
+            return_exceptions=True,
         )
-
-        # Build contents list with extracted content
-        for (url, _), result in zip(extraction_tasks, extraction_results, strict=False):
-            if isinstance(result, Exception):
-                error_msg = str(result)
-                if verbose:
-                    print(f"  [Jina Reader] LLM extraction error for {url}: {error_msg}")
-                contents.append(
-                    {
-                        "url": url,
-                        "error": error_msg,
-                        "content": "",
-                    }
-                )
-            else:
-                # Add citation number if provided
-                citation_num = url_numbers.get(url) if url_numbers else None
-                if citation_num:
-                    formatted_content = f"[{citation_num}] {url}\n---\n{result}"
-                else:
-                    formatted_content = f"{url}\n---\n{result}"
-                contents.append(
-                    {
-                        "url": url,
-                        "content": formatted_content,
-                    }
-                )
+        for (url, _), result in zip(urls_with_content, extraction_results, strict=False):
+            if isinstance(result, BaseException):
+                contents.append({"url": url, "error": str(result), "content": ""})
+                continue
+            contents.append({"url": url, "content": _format_page_content(url, result, url_numbers)})
     else:
-        # No LLM extraction needed (get_full=True or no client/model)
-        for url, raw_content in all_urls_with_content:
-            # Add citation number if provided
-            citation_num = url_numbers.get(url) if url_numbers else None
-            if citation_num:
-                formatted_content = f"[{citation_num}] {url}\n---\n{raw_content}"
-            else:
-                formatted_content = f"{url}\n---\n{raw_content}"
+        for url, raw_content in urls_with_content:
             contents.append(
                 {
                     "url": url,
-                    "content": formatted_content,
+                    "content": _format_page_content(url, raw_content, url_numbers),
                 }
             )
 
+    ordered_pages = {page["url"]: page for page in contents}
+    result_pages = [ordered_pages[url] for url in urls if url in ordered_pages]
+
     if verbose:
-        print(f"[Jina Reader] Completed {len(contents)} fetches")
+        print(f"[Fetch] Completed {len(result_pages)} fetches")
 
-    return {"pages": contents}
+    return {
+        "pages": result_pages,
+        "provider_failures": raw_result.get("provider_failures", []),
+    }
 
 
-def _generate_sources_list(
+def _format_page_content(
+    url: str,
+    content: str,
     url_numbers: dict[str, int] | None,
-    url_titles: dict[str, str] | None,
 ) -> str:
-    """Generate sources list with format: [1] Title - URL."""
-    if not url_numbers:
-        return ""
+    """Format page content with optional citation number."""
+    citation_num = url_numbers.get(url) if url_numbers else None
+    prefix = f"[{citation_num}] {url}" if citation_num else url
+    return f"{prefix}\n---\n{content}"
 
-    lines = ["", "Sources:"]
-    # Sort by citation number
-    for num in sorted(url_numbers.values()):
-        # Find URL for this number
-        url = [u for u, n in url_numbers.items() if n == num][0]
-        # Get title if available
-        title = (url_titles.get(url) if url_titles else "") if url in (url_titles or {}) else ""
-        if title:
-            lines.append(f"[{num}] {title} - {url}")
-        else:
-            lines.append(f"[{num}] {url}")
-    return "\n".join(lines)
+
+def _response_text(response: Any) -> str:
+    """Extract assistant text from an LLM response."""
+    return response.choices[0].message.content or ""
 
 
 async def _select_chunks_with_llm(
-    client: AsyncOpenAI,
-    model: str,
+    config: Config,
     content: str,
     query: str,
     verbose: bool = False,
 ) -> str:
-    """Select relevant chunks from content using LLM.
-
-    Splits content into logical chunks, asks LLM which chunks are relevant,
-    and returns only the selected chunks.
-
-    Args:
-        client: OpenAI client
-        model: Model name
-        content: Raw page content
-        query: Original search query
-        verbose: Show detailed logs
-
-    Returns:
-        Selected chunks concatenated together
-    """
-    # Split content into logical chunks
+    """Select relevant chunks from content using the configured LLM chain."""
     chunks = create_logical_chunks(content)
-
     if not chunks:
         return content
 
     if verbose:
         print(f"  [Chunk Selector] Split into {len(chunks)} chunks")
 
-    # Build the prompt with chunks
     system_prompt = CHUNK_SELECTOR_PROMPT.format(query=query)
-
-    # Format chunks for the prompt
-    chunks_text = []
-    for chunk in chunks:
-        chunks_text.append(f"[CHUNK {chunk.number}] {chunk.content}")
-
-    user_content = "\n\n".join(chunks_text)
+    user_content = "\n\n".join(f"[CHUNK {chunk.number}] {chunk.content}" for chunk in chunks)
 
     try:
-        response = await client.chat.completions.create(
-            model=model,
+        response = await run_llm_chain(
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},
             ],
-            max_tokens=100,  # We only need a few numbers
+            tools=[],
+            config=config,
+            verbose=verbose,
+            max_tokens=100,
         )
-
-        llm_response = response.choices[0].message.content or ""
-        llm_response = llm_response.strip().lower()
-
+        llm_response = _response_text(response).strip().lower()
         if verbose:
             print(f"  [Chunk Selector] LLM response: {llm_response}")
 
-        # Parse the response - extract numbers
-        if llm_response == "none" or llm_response == "n/a" or llm_response == "null":
-            if verbose:
-                print("  [Chunk Selector] No relevant chunks found")
+        if llm_response in {"none", "n/a", "null"}:
             return ""
 
-        # Extract chunk numbers, being careful to avoid count numbers
-        # E.g., "I found 3 chunks: 1, 4, 7" should give [1, 4, 7], not [3, 1, 4, 7]
-        import re as re_module
-
-        # If response has a colon, only take numbers after it (the actual chunk list)
-        if ":" in llm_response:
-            after_colon = llm_response.split(":", 1)[1]
-            all_numbers = re_module.findall(r"\d+", after_colon)
-        else:
-            all_numbers = re_module.findall(r"\d+", llm_response)
-
+        number_source = llm_response.split(":", 1)[1] if ":" in llm_response else llm_response
+        all_numbers = re.findall(r"\d+", number_source)
         if not all_numbers:
-            if verbose:
-                print("  [Chunk Selector] No numbers found in response")
             return ""
 
-        # Filter to valid chunk numbers (1-indexed, within range)
-        max_chunk = len(chunks)
-        selected_nums: set[int] = set()
-        rejected_nums: list[int] = []
-
-        for n_str in all_numbers:
-            n = int(n_str)
-            if 1 <= n <= max_chunk:
-                selected_nums.add(n)
-            else:
-                rejected_nums.append(n)
-
-        if rejected_nums and verbose:
-            print(
-                f"  [Chunk Selector] Ignoring out-of-range numbers: {rejected_nums} (valid: 1-{max_chunk})"
-            )
-
-        if not selected_nums:
-            if verbose:
-                print("  [Chunk Selector] No valid chunk numbers found")
+        selected_numbers = {
+            int(number) for number in all_numbers if 1 <= int(number) <= len(chunks)
+        }
+        if not selected_numbers:
             return ""
 
+        selected_chunks = [chunks[number - 1] for number in sorted(selected_numbers)]
+        return "\n\n---\n\n".join(chunk.content for chunk in selected_chunks)
+    except Exception as exc:
         if verbose:
-            print(f"  [Chunk Selector] Selected chunks: {sorted(selected_nums)}")
-
-        # Get selected chunks
-        selected_chunks = [chunks[n - 1] for n in sorted(selected_nums)]
-
-        # Return concatenated content
-        result = "\n\n---\n\n".join(c.content for c in selected_chunks)
-
-        if verbose:
-            print(
-                f"  [Chunk Selector] Returning {len(selected_chunks)} chunks ({len(result)} chars)"
-            )
-
-        return result
-
-    except Exception as e:
-        if verbose:
-            print(f"  [Chunk Selector] ERROR: {e}")
-        # Fallback: return first few chunks as best-effort
-        # This handles API failures, timeouts, etc. gracefully
-        fallback_count = min(5, len(chunks))
-        if verbose:
-            print(f"  [Chunk Selector] Falling back to first {fallback_count} chunks")
-        return "\n\n---\n\n".join(c.content for c in chunks[:fallback_count])
+            print(f"  [Chunk Selector] ERROR: {exc}")
+            print(f"  [Chunk Selector] Falling back to first {min(5, len(chunks))} chunks")
+        return "\n\n---\n\n".join(chunk.content for chunk in chunks[:5])
 
 
 async def _extract_with_llm(
-    client: AsyncOpenAI,
-    model: str,
+    config: Config,
     content: str,
     query: str,
     instructions: str,
     verbose: bool = False,
 ) -> str:
-    """Extract relevant content using LLM.
-
-    Args:
-        client: OpenAI client
-        model: Model name
-        content: Raw page content
-        query: Original search query
-        instructions: Extraction instructions
-        verbose: Show detailed logs
-
-    Returns:
-        Extracted/summarized content
-    """
-    # Build extraction prompt
+    """Extract relevant content using the configured LLM chain."""
     prompt = EXTRACTOR_PROMPT_TEMPLATE.format(
         query=query,
-        instructions=instructions
-        if instructions
-        else "Extract all relevant information from this page.",
+        instructions=instructions or "Extract all relevant information from this page.",
     )
 
     if verbose:
@@ -925,135 +373,55 @@ async def _extract_with_llm(
             print(f"  [LLM Extractor] Instructions: {instructions[:100]}...")
 
     try:
-        response = await client.chat.completions.create(
-            model=model,
+        response = await run_llm_chain(
             messages=[
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": content},
             ],
+            tools=[],
+            config=config,
+            verbose=verbose,
             max_tokens=16384,
         )
-
-        extracted = response.choices[0].message.content or "No content extracted"
-
+        extracted = _response_text(response) or "No content extracted"
         if verbose:
             print(f"  [LLM Extractor] Extracted {len(extracted)} chars")
-
         return extracted
-    except Exception as e:
+    except Exception as exc:
         if verbose:
-            print(f"  [LLM Extractor] ERROR: {e}")
-        # Fallback to raw content on error
+            print(f"  [LLM Extractor] ERROR: {exc}")
         return content[:2000]
-
-
-async def _get_single(
-    client: httpx.AsyncClient, url: str, jina_key: str, verbose: bool = False
-) -> dict[str, Any]:
-    """Fetch content from a single URL."""
-    headers = {
-        "X-Retain-Images": "none",
-        "X-Retain-Links": "gpt-oss",
-        "X-Timeout": "40",
-    }
-    if jina_key:
-        headers["Authorization"] = f"Bearer {jina_key}"
-
-    if verbose:
-        print(f"  [Jina Reader] URL: {url}")
-        print(f"  [Jina Reader] Headers: {headers}")
-
-    response = None
-    try:
-        response = await client.get(
-            f"https://r.jina.ai/{url}",
-            headers=headers,
-        )
-        response.raise_for_status()
-
-        if verbose:
-            print(f"  [Jina Reader] Status: {response.status_code}")
-            print(f"  [Jina Reader] Content length: {len(response.text)} chars")
-
-        return {
-            "url": url,
-            "content": response.text,
-        }
-    except httpx.HTTPStatusError as e:
-        error_msg = f"HTTP {e.response.status_code}: {e.response.text}"
-        if verbose:
-            print(f"  [Jina Reader] ❌ ERROR: {error_msg}")
-        return {
-            "url": url,
-            "error": error_msg,
-            "content": "",
-        }
-    except Exception as e:
-        error_msg = str(e)
-        if verbose:
-            print(f"  [Jina Reader] ❌ ERROR: {error_msg}")
-            if response:
-                with contextlib.suppress(BaseException):
-                    print(f"  [Jina Reader] Raw response: {response.text[:500]}")
-        return {
-            "url": url,
-            "error": error_msg,
-            "content": "",
-        }
 
 
 async def execute_tool(
     tool_name: str,
     tool_args: dict[str, Any],
-    jina_key: str,
+    config: Config,
     verbose: bool = False,
-    llm_client: AsyncOpenAI | None = None,
-    llm_model: str | None = None,
     query: str = "",
-    timeout: int = 30,
     url_numbers: dict[str, int] | None = None,
     url_titles: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Execute a tool by name.
-
-    Args:
-        tool_name: Name of the tool to execute
-        tool_args: Arguments for the tool
-        jina_key: Jina AI API key
-        verbose: Show detailed logs
-        llm_client: OpenAI client for LLM extraction (for web_get)
-        llm_model: Model name for LLM extraction (for web_get)
-        query: Original search query (for web_get extraction)
-        timeout: Timeout in seconds for Jina API calls (default: 30)
-        url_numbers: URL -> citation number mapping (for web_get)
-        url_titles: URL -> title mapping (for sources list in web_get)
-
-    Returns:
-        Tool execution result
-    """
+    """Execute a tool by name."""
     if tool_name == "web_search":
         queries = tool_args.get("queries", [])
-        return await web_search(queries, jina_key, verbose, timeout)
-    elif tool_name == "web_get":
+        return await web_search(queries, config, verbose)
+    if tool_name == "web_get":
         urls = tool_args.get("urls", [])
         instructions = tool_args.get("instructions", "")
         get_full = tool_args.get("get_full", False)
         use_chunks = tool_args.get("use_chunks", False)
         return await web_get(
-            urls,
-            jina_key,
-            verbose,
-            instructions,
-            get_full,
-            use_chunks,
-            llm_client,
-            llm_model,
-            query,
-            timeout,
-            url_numbers,
-            url_titles,
+            urls=urls,
+            config=config,
+            verbose=verbose,
+            instructions=instructions,
+            get_full=get_full,
+            use_chunks=use_chunks,
+            query=query,
+            url_numbers=url_numbers,
+            url_titles=url_titles,
         )
-    elif tool_name == "final_answer":
+    if tool_name == "final_answer":
         return {"answer": tool_args.get("answer", "")}
-    else:
-        return {"error": f"Unknown tool: {tool_name}"}
+    return {"error": f"Unknown tool: {tool_name}"}

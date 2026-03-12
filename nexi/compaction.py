@@ -11,8 +11,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from openai import AsyncOpenAI
-
+from nexi.backends.orchestrators import run_llm_chain
 from nexi.config import Config, get_compaction_prompt
 from nexi.token_counter import count_messages_tokens
 
@@ -102,8 +101,7 @@ def extract_metadata(messages: list[dict[str, Any]]) -> CompactionMetadata:
 async def generate_summary(
     content: str,
     original_query: str,
-    client: AsyncOpenAI,
-    model: str,
+    config: Config,
     target_words: int = 5000,
     verbose: bool = False,
 ) -> str:
@@ -112,8 +110,7 @@ async def generate_summary(
     Args:
         content: Content to summarize (web_fetch results + assistant messages)
         original_query: User's original search query
-        client: OpenAI client
-        model: Model name
+        config: NEXI configuration
         target_words: Target word count for summary
         verbose: Show detailed progress
 
@@ -130,12 +127,15 @@ async def generate_summary(
     )
 
     try:
-        response = await client.chat.completions.create(
-            model=model,
+        response = await run_llm_chain(
             messages=[
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": content},
             ],
+            tools=[],
+            config=config,
+            verbose=verbose,
+            max_tokens=config.max_output_tokens,
         )
 
         summary = response.choices[0].message.content or ""
@@ -215,8 +215,6 @@ def rebuild_context(
 async def compact_conversation(
     messages: list[dict[str, Any]],
     original_query: str,
-    client: AsyncOpenAI,
-    model: str,
     config: Config,
     verbose: bool = False,
 ) -> list[dict[str, Any]]:
@@ -225,8 +223,6 @@ async def compact_conversation(
     Args:
         messages: Original conversation messages
         original_query: User's original search query
-        client: OpenAI client
-        model: Model name
         config: NEXI configuration
         verbose: Show detailed progress
 
@@ -264,8 +260,7 @@ async def compact_conversation(
     summary = await generate_summary(
         content=content,
         original_query=original_query,
-        client=client,
-        model=model,
+        config=config,
         target_words=config.compact_target_words,
         verbose=verbose,
     )

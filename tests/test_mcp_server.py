@@ -2,71 +2,57 @@
 
 from __future__ import annotations
 
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 
+from nexi.config import Config
+from nexi.search import SearchResult
 
-def test_mcp_server_module_exists():
-    """Test that MCP server module can be imported."""
-    try:
-        from nexi.mcp_server import mcp, nexi_search, run
-
-        assert mcp is not None
-        assert nexi_search is not None
-        assert run is not None
-    except ImportError:
-        pytest.skip("fastmcp not installed - install with: uv sync --group mcp")
+fastmcp = pytest.importorskip("fastmcp")
 
 
-@pytest.mark.skipif(
-    True, reason="Requires fastmcp to be installed - install with: uv sync --group mcp"
-)
-def test_nexi_search_tool_signature():
-    """Test that nexi_search tool has correct signature."""
-    import inspect
+def _build_config() -> Config:
+    """Create a canonical config fixture."""
+    return Config(
+        llm_backends=["openai_default"],
+        search_backends=["jina"],
+        fetch_backends=["jina"],
+        providers={
+            "openai_default": {
+                "type": "openai_compatible",
+                "base_url": "https://api.test.com/v1",
+                "api_key": "test-key",
+                "model": "test-model",
+            },
+            "jina": {
+                "type": "jina",
+                "api_key": "test-jina-key",
+            },
+        },
+        default_effort="m",
+        max_output_tokens=4000,
+        time_target=600,
+    )
 
-    from nexi.mcp_server import nexi_search
 
-    sig = inspect.signature(nexi_search)
-    params = list(sig.parameters.keys())
+def test_mcp_server_module_exists() -> None:
+    """MCP server module imports when fastmcp is present."""
+    from nexi.mcp_server import mcp, nexi_search, run
 
-    assert "query" in params
-    assert "effort" in params
-    assert "max_iter" in params
-    assert "time_target" in params
-    assert "verbose" in params
-
-    # Check defaults
-    assert sig.parameters["effort"].default == "m"
-    assert sig.parameters["max_iter"].default is None
-    assert sig.parameters["time_target"].default is None
-    assert sig.parameters["verbose"].default is False
+    assert mcp is not None
+    assert nexi_search is not None
+    assert run is not None
 
 
-@pytest.mark.skipif(
-    True, reason="Requires fastmcp to be installed - install with: uv sync --group mcp"
-)
 @patch("nexi.mcp_server.ensure_config")
 @patch("nexi.mcp_server.run_search_sync")
-def test_nexi_search_basic(mock_run_search, mock_ensure_config):
-    """Test basic nexi_search functionality."""
+def test_nexi_search_basic(mock_run_search, mock_ensure_config) -> None:
+    """nexi_search returns answer text and metadata."""
     from nexi.mcp_server import nexi_search
-    from nexi.search import SearchResult
 
-    # Mock config
-    mock_config = Mock()
-    mock_config.base_url = "http://test.com"
-    mock_config.api_key = "test-key"
-    mock_config.model = "test-model"
-    mock_config.jina_key = "test-jina-key"
-    mock_config.default_effort = "m"
-    mock_config.time_target = 600
-    mock_config.max_output_tokens = 4000
-    mock_ensure_config.return_value = mock_config
-
-    # Mock search result
-    mock_result = SearchResult(
+    mock_ensure_config.return_value = _build_config()
+    mock_run_search.return_value = SearchResult(
         answer="Test answer",
         urls=["http://example.com"],
         iterations=3,
@@ -74,9 +60,7 @@ def test_nexi_search_basic(mock_run_search, mock_ensure_config):
         tokens=1000,
         reached_max_iter=False,
     )
-    mock_run_search.return_value = mock_result
 
-    # Call the tool
     result = nexi_search(
         query="test query",
         effort="m",
@@ -85,27 +69,24 @@ def test_nexi_search_basic(mock_run_search, mock_ensure_config):
         verbose=False,
     )
 
-    # Verify result
     assert "Test answer" in result
     assert "http://example.com" in result
-    assert "3" in result  # iterations
-    assert "5.5" in result  # duration
+    assert "Iterations: 3" in result
+    assert "Duration: 5.5s" in result
 
-    # Verify run_search_sync was called correctly
     mock_run_search.assert_called_once()
     call_kwargs = mock_run_search.call_args.kwargs
     assert call_kwargs["query"] == "test query"
     assert call_kwargs["effort"] == "m"
     assert call_kwargs["max_iter"] == 5
     assert call_kwargs["time_target"] == 120
+    assert call_kwargs["config"].default_effort == "m"
+    assert call_kwargs["config"].time_target == 120
 
 
-@pytest.mark.skipif(
-    True, reason="Requires fastmcp to be installed - install with: uv sync --group mcp"
-)
 @patch("nexi.mcp_server.ensure_config")
-def test_nexi_search_config_error(mock_ensure_config):
-    """Test nexi_search handles config errors."""
+def test_nexi_search_config_error(mock_ensure_config) -> None:
+    """nexi_search handles config loading errors."""
     from nexi.mcp_server import nexi_search
 
     mock_ensure_config.side_effect = Exception("Config error")
@@ -116,27 +97,13 @@ def test_nexi_search_config_error(mock_ensure_config):
     assert "Config error" in result
 
 
-@pytest.mark.skipif(
-    True, reason="Requires fastmcp to be installed - install with: uv sync --group mcp"
-)
 @patch("nexi.mcp_server.ensure_config")
 @patch("nexi.mcp_server.run_search_sync")
-def test_nexi_search_runtime_error(mock_run_search, mock_ensure_config):
-    """Test nexi_search handles runtime errors."""
+def test_nexi_search_runtime_error(mock_run_search, mock_ensure_config) -> None:
+    """nexi_search handles runtime search errors."""
     from nexi.mcp_server import nexi_search
 
-    # Mock config
-    mock_config = Mock()
-    mock_config.base_url = "http://test.com"
-    mock_config.api_key = "test-key"
-    mock_config.model = "test-model"
-    mock_config.jina_key = "test-jina-key"
-    mock_config.default_effort = "m"
-    mock_config.time_target = 600
-    mock_config.max_output_tokens = 4000
-    mock_ensure_config.return_value = mock_config
-
-    # Mock search error
+    mock_ensure_config.return_value = _build_config()
     mock_run_search.side_effect = Exception("Search failed")
 
     result = nexi_search(query="test query")

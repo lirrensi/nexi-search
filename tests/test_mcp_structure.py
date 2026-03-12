@@ -26,9 +26,10 @@ def test_mcp_server_import_structure():
     content = mcp_server_py.read_text()
 
     # Check for required imports
-    assert "from nexi.config import Config, ensure_config" in content
+    assert "from nexi.config import ensure_config" in content
     assert "from nexi.search import run_search_sync" in content
     assert "from fastmcp import FastMCP" in content
+    assert "from dataclasses import replace" in content
 
     # Check for tool function
     assert "@mcp.tool" in content

@@ -19,6 +19,8 @@ mcp = [
 
 [project.scripts]
 nexi = "nexi.cli:main"
+nexi-search = "nexi.search_cli:main"
+nexi-fetch = "nexi.fetch_cli:main"
 
 [dependency-groups]
 dev = [
@@ -60,5 +62,5 @@ line-ending = "auto"
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-packages = ["nexi"]
+[tool.setuptools.packages.find]
+include = ["nexi", "nexi.*"]

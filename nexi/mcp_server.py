@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 try:
     from fastmcp import FastMCP
 except ImportError as err:
@@ -9,7 +11,7 @@ except ImportError as err:
         "fastmcp is required to run the MCP server. Install it with: pip install fastmcp"
     ) from err
 
-from nexi.config import Config, ensure_config
+from nexi.config import ensure_config
 from nexi.search import run_search_sync
 
 # Initialize MCP server
@@ -56,11 +58,8 @@ def nexi_search(
     search_time_target = time_target if time_target is not None else config.time_target
 
     # Create temporary config with overrides
-    search_config = Config(
-        base_url=config.base_url,
-        api_key=config.api_key,
-        model=config.model,
-        jina_key=config.jina_key,
+    search_config = replace(
+        config,
         default_effort=search_effort,
         time_target=search_time_target,
         max_output_tokens=config.max_output_tokens,

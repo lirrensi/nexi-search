@@ -7,10 +7,9 @@ import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
-from openai import AsyncOpenAI
-
+from nexi.backends.orchestrators import ProviderChainError, run_llm_chain
 from nexi.compaction import compact_conversation, should_compact
 from nexi.config import EFFORT_LEVELS, Config, get_system_prompt
 from nexi.token_counter import count_messages_tokens, estimate_page_tokens
@@ -31,23 +30,19 @@ class SearchResult:
     reached_max_iter: bool = False
 
 
-ProgressCallback = Callable[[str, int, int], None]
+ProgressCallback = Callable[..., None]
 
 
 async def _request_final_answer(
     messages: list[dict[str, Any]],
-    client: AsyncOpenAI,
-    model: str,
-    max_tokens: int,
+    config: Config,
     verbose: bool = False,
 ) -> str:
     """Request a final answer from the LLM using gathered information.
 
     Args:
         messages: Conversation history
-        client: OpenAI client
-        model: Model name
-        max_tokens: Max output tokens
+        config: NEXI configuration
         verbose: Show detailed progress
 
     Returns:
@@ -66,12 +61,12 @@ async def _request_final_answer(
         if verbose:
             print("[Final Stage] Requesting final answer from LLM...")
 
-        response = await client.chat.completions.create(
-            model=model,
+        response = await run_llm_chain(
             messages=final_messages,
             tools=_get_tool_schemas(),
-            tool_choice="auto",
-            max_tokens=max_tokens,
+            config=config,
+            verbose=verbose,
+            max_tokens=config.max_output_tokens,
         )
 
         if verbose:
@@ -82,8 +77,12 @@ async def _request_final_answer(
         # Check for tool calls (should be final_answer)
         if message.tool_calls:
             tool_call = message.tool_calls[0]
-            tool_name = tool_call.function.name
-            tool_args = json.loads(tool_call.function.arguments)
+            function_data = getattr(tool_call, "function", None)
+            if function_data is None:
+                return message.content or "No answer provided"
+
+            tool_name = function_data.name
+            tool_args = json.loads(function_data.arguments)
 
             if tool_name == "final_answer":
                 return tool_args.get("answer", "No answer provided")
@@ -143,20 +142,14 @@ async def run_search(
             max_iter = EFFORT_LEVELS["m"]["max_iter"]
 
     # Ensure max_iter is an int
-    if not isinstance(max_iter, int):
-        max_iter = EFFORT_LEVELS["m"]["max_iter"]
+    resolved_max_iter = max_iter if isinstance(max_iter, int) else EFFORT_LEVELS["m"]["max_iter"]
+    max_iterations = cast(int, resolved_max_iter)
 
     # Determine timeout (use CLI option if provided, otherwise use config)
     time_target_total = time_target if time_target is not None else config.time_target
 
     # Load system prompt
-    system_prompt = get_system_prompt(max_iter, effort)
-
-    # Initialize OpenAI client
-    client = AsyncOpenAI(
-        base_url=config.base_url,
-        api_key=config.api_key,
-    )
+    system_prompt = get_system_prompt(max_iterations, effort)
 
     # Initialize conversation
     if initial_messages is not None:
@@ -238,7 +231,10 @@ async def run_search(
                 updated_page["content"] = content
             updated_pages.append(updated_page)
 
-        return {"pages": updated_pages}
+        return {
+            **{key: value for key, value in result.items() if key != "pages"},
+            "pages": updated_pages,
+        }
 
     def report_progress(
         message: str,
@@ -248,12 +244,12 @@ async def run_search(
     ) -> None:
         """Report progress via callback."""
         if progress_callback:
-            progress_callback(message, iteration, max_iter, context_size, urls)
+            progress_callback(message, iteration, max_iterations, context_size, urls)
 
     report_progress("Starting search...", 0)
 
     try:
-        for current_iteration in range(1, max_iter + 1):
+        for current_iteration in range(1, max_iterations + 1):
             # Check timeout (only if time_target is set)
             if time_target_total is not None:
                 elapsed = time.time() - start_time
@@ -261,66 +257,25 @@ async def run_search(
                     report_progress(f"Time target reached after {elapsed:.1f}s", current_iteration)
                     final_answer = await _request_final_answer(
                         messages=messages,
-                        client=client,
-                        model=config.model,
-                        max_tokens=config.max_output_tokens,
+                        config=config,
                         verbose=verbose,
                     )
                     break
 
-            report_progress(f"Iteration {current_iteration}/{max_iter}", current_iteration)
+            report_progress(f"Iteration {current_iteration}/{max_iterations}", current_iteration)
 
-            # Call LLM with tools (with retry logic)
-            response = None
-            last_error = None
-            for attempt in range(config.llm_max_retries):
-                try:
-                    if verbose:
-                        print(
-                            f"[LLM] Calling {config.model}... (attempt {attempt + 1}/{config.llm_max_retries})"
-                        )
-                        print(f"[LLM] Messages count: {len(messages)}")
-
-                    response = await client.chat.completions.create(
-                        model=config.model,
-                        messages=messages,
-                        tools=_get_tool_schemas(),
-                        tool_choice="auto",
-                        max_tokens=config.max_output_tokens,
-                    )
-
-                    if verbose:
-                        print("[LLM] Response received")
-                        if response.usage:
-                            print(
-                                f"[LLM] Tokens: {response.usage.total_tokens} (prompt: {response.usage.prompt_tokens}, completion: {response.usage.completion_tokens})"
-                            )
-                    break  # Success, exit retry loop
-                except Exception as e:
-                    last_error = e
-                    error_msg = (
-                        f"LLM API error (attempt {attempt + 1}/{config.llm_max_retries}): {e}"
-                    )
-                    report_progress(error_msg, current_iteration)
-                    if verbose:
-                        print(f"[LLM] ERROR: {error_msg}")
-
-                    if attempt < config.llm_max_retries - 1:
-                        # Exponential backoff: 1s, 2s, 4s
-                        backoff_delay = 2**attempt
-                        if verbose:
-                            print(f"[LLM] Retrying in {backoff_delay}s...")
-                        await asyncio.sleep(backoff_delay)
-                    else:
-                        # All retries exhausted
-                        final_answer = _force_answer(
-                            messages,
-                            f"API error after {config.llm_max_retries} retries: {last_error}",
-                        )
-                        break
-
-            if response is None:
-                # All retries failed, exit the search loop
+            try:
+                response = await run_llm_chain(
+                    messages=messages,
+                    tools=_get_tool_schemas(),
+                    config=config,
+                    verbose=verbose,
+                    max_tokens=config.max_output_tokens,
+                )
+            except ProviderChainError as exc:
+                if verbose:
+                    print(f"[LLM] Provider chain exhausted: {exc.provider_failures}")
+                final_answer = _force_answer(messages, str(exc))
                 break
 
             # Track tokens
@@ -339,10 +294,16 @@ async def run_search(
             # Check for tool calls
             if message.tool_calls:
                 tool_call = message.tool_calls[0]
-                tool_name = tool_call.function.name
+                function_data = getattr(tool_call, "function", None)
+                if function_data is None:
+                    final_answer = message.content or "No answer provided"
+                    report_progress("Answer ready!", current_iteration)
+                    break
+
+                tool_name = function_data.name
                 # Parse tool arguments with fallback for malformed JSON
                 try:
-                    tool_args = json.loads(tool_call.function.arguments)
+                    tool_args = json.loads(function_data.arguments)
                 except json.JSONDecodeError:
                     if verbose:
                         print("[Warning] Malformed tool arguments, using empty dict")
@@ -364,7 +325,11 @@ async def run_search(
                         current_iteration,
                     )
                     result = await execute_tool(
-                        tool_name, tool_args, config.jina_key, verbose, timeout=config.jina_timeout
+                        tool_name,
+                        tool_args,
+                        config,
+                        verbose,
+                        query=query,
                     )
 
                     if verbose:
@@ -398,7 +363,7 @@ async def run_search(
                                     "type": "function",
                                     "function": {
                                         "name": tool_name,
-                                        "arguments": tool_call.function.arguments,
+                                        "arguments": function_data.arguments,
                                     },
                                 }
                             ],
@@ -422,12 +387,9 @@ async def run_search(
                     result = await execute_tool(
                         tool_name,
                         tool_args,
-                        config.jina_key,
+                        config,
                         verbose,
-                        client,
-                        config.model,
-                        query,
-                        timeout=config.jina_timeout,
+                        query=query,
                         url_numbers=url_numbers,  # Pass URL numbers for citation markers
                         url_titles=url_to_title,  # Pass URL titles for sources list
                     )
@@ -459,8 +421,6 @@ async def run_search(
                         messages = await compact_conversation(
                             messages=messages,
                             original_query=query,
-                            client=client,
-                            model=config.model,
                             config=config,
                             verbose=verbose,
                         )
@@ -490,7 +450,7 @@ async def run_search(
                                     "type": "function",
                                     "function": {
                                         "name": tool_name,
-                                        "arguments": tool_call.function.arguments,
+                                        "arguments": function_data.arguments,
                                     },
                                 }
                             ],
@@ -538,13 +498,12 @@ async def run_search(
         else:
             # Max iterations reached - enter final stage
             report_progress(
-                f"Max iterations ({max_iter}) reached, requesting final answer", max_iter
+                f"Max iterations ({max_iterations}) reached, requesting final answer",
+                max_iterations,
             )
             final_answer = await _request_final_answer(
                 messages=messages,
-                client=client,
-                model=config.model,
-                max_tokens=config.max_output_tokens,
+                config=config,
                 verbose=verbose,
             )
 
@@ -563,7 +522,7 @@ async def run_search(
         iterations=current_iteration,
         duration_s=duration,
         tokens=total_tokens,
-        reached_max_iter=current_iteration >= max_iter,
+        reached_max_iter=current_iteration >= max_iterations,
     )
 
 
