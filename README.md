@@ -1,40 +1,128 @@
-# NEXI 🔍
+# NEXI
 
-**Self-hosted perplexity in your terminal.** LLM-powered web search that stays out of your way.
+**A resilient research and retrieval suite for the terminal.**
+
+NEXI is not just another search wrapper with a cute prompt and one hardcoded backend pretending to be a product. It is a configurable CLI and MCP toolset for agentic research, direct search, and direct fetching, built around provider chains, failover, and script-friendly surfaces.
 
 ![NEXI](https://raw.githubusercontent.com/lirrensi/nexi-search/main/img/nexi.jpg)
 
 ---
 
-## Why NEXI Exists
+## Version 2.0
 
-You have questions. The web has answers. But getting from A to B shouldn't require:
+NEXI 2.0 is the big cleanup release. The grown-up one. The one where the tool stops being a fragile little demo and starts acting like a proper suite.
 
-- A browser tab you'll forget to close
-- A $20/month subscription to a search product
-- Your coding agent's precious context window filled with search noise
+- ✨ provider chains are now the core model, with ordered fallbacks across LLM, search, and fetch
+- 🧾 config is now TOML at `~/.config/nexi/config.toml`
+- 🚪 first run creates a commented template and exits cleanly instead of forcing a wizard
+- 🛠️ `nexi`, `nexi-search`, and `nexi-fetch` are now clear first-class surfaces
+- 🔌 MCP now mirrors those same surfaces with `nexi_agent`, `nexi_search`, and `nexi_fetch`
+- ⚡ default fetch works out of the box with zero-config backends
 
-**NEXI is for people who live in the terminal.**
+If you are upgrading from an older release, treat this as a config migration. The old config shape is not the v2 contract anymore.
 
-It's the search tool you pipe, script, and forget. Point your agents at it, or just type a query and get an answer with sources. No MCP dance required — just a CLI that works.
+---
 
-### The Problem with AI Search Today
+## Why This Slaps
 
-| Pain Point | How NEXI Helps |
-|------------|----------------|
-| Perplexity et al. are expensive | Use any OpenAI-compatible API, including cheap models |
-| Web search pollutes your agent's context | Offload searches to a dedicated tool, get summarized results |
-| Browser tabs multiply like rabbits | Stay in your terminal, pipe to files, script away |
-| "AI search" is a black box | `--verbose` shows every LLM call, token, and decision |
+- 🧠 agentic research when you want the full answer
+- 🔎 direct search when you want raw search results
+- 📄 direct fetch when you want page content or extraction
+- 🪜 fallback chains when a provider decides to be dramatic
+- 🤖 MCP surfaces that mirror the CLI instead of making up weird names
+- 🧩 one stable interface over many vendors
 
-### Philosophy
+---
 
-- **Own your tools.** Your API keys, your models, your data.
-- **Stay minimal.** Vibecoded in 2 hours. No bloat.
-- **Be transparent.** Every decision is visible if you want to see it.
-- **Respect the workflow.** CLI-first, pipe-friendly, script-ready.
+## What NEXI Is
 
-> *Searches take 1-2 minutes for deep research. That's the cost of thoroughness. Go make tea.*
+NEXI gives you one suite with three practical runtime surfaces:
+
+- `nexi` - full agentic research loop with citations and synthesis
+- `nexi-search` - direct search-provider execution without the agent loop
+- `nexi-fetch` - direct page fetching or extraction without the agent loop
+
+You choose providers. You choose order. You choose fallbacks. NEXI handles the fixed interface on top.
+
+That means it works well as:
+
+- 🧑‍💻 a terminal-native research tool
+- 🔁 a pipeable backend for agents and scripts
+- 🧱 a stable abstraction over changing provider APIs
+- 🛡️ a failure-resistant search stack instead of a single brittle vendor binding
+
+## What NEXI Is Not
+
+- not a hosted search subscription
+- not a browser replacement with a giant UI
+- not a one-provider toy CLI
+- not a magical black box that hides how it got the answer
+
+---
+
+## Why It Exists
+
+Most AI search tools are either expensive, opaque, locked to one provider, or annoying to automate.
+
+NEXI exists for people who want:
+
+- terminal-first workflows
+- direct ownership of models, keys, and providers
+- predictable command-line interfaces for agents
+- transparent behavior with verbose debugging when needed
+- graceful degradation when one provider fails
+
+With NEXI, the interface stays stable while your backend stack evolves, providers wobble, and the internet continues being the internet.
+
+---
+
+## Supported Providers
+
+Here is the practical short version of what NEXI supports today:
+
+### LLM 🧠
+
+- `openai_compatible` - OpenRouter, OpenAI, local OpenAI-compatible servers, and similar APIs
+- custom Python LLM providers via `provider-<file>`
+
+### Search 🔎
+
+- `jina`
+- `tavily`
+- `exa`
+- `firecrawl`
+- `linkup`
+- `brave`
+- `serpapi`
+- `serper`
+- `perplexity_search`
+- custom Python search providers via `provider-<file>`
+
+### Fetch 📄
+
+- `markdown_new`
+- `crawl4ai`
+- `jina`
+- `tavily`
+- `exa`
+- `firecrawl`
+- `linkup`
+- custom Python fetch providers via `provider-<file>`
+
+For the full canonical matrix, see `docs/provider-matrix.md`.
+
+---
+
+## Why 2.0 Is Better
+
+| Problem | NEXI 2.0 answer |
+|---------|------------------|
+| One provider goes down | Ordered fallbacks continue through the next configured provider |
+| Search and fetch are coupled together awkwardly | Search, fetch, and LLM chains are configured independently |
+| CLI surfaces are muddy | `nexi`, `nexi-search`, and `nexi-fetch` each have a clear role |
+| MCP naming is confusing | MCP now mirrors the same runtime model exactly |
+| First-run setup is messy | Missing config creates a readable TOML template and exits cleanly |
+| Agents need structured payloads | Direct search and fetch support `--json` |
 
 ---
 
@@ -44,165 +132,188 @@ It's the search tool you pipe, script, and forget. Point your agents at it, or j
 # Install
 uv tool install git+https://github.com/lirrensi/nexi-search.git
 
-# Run (first time = interactive config)
+# First run creates the config template and exits
 nexi "what is the deal with rust async traits"
+
+# Open the config, use guided onboarding, or run readiness checks
+nexi config
+nexi onboard
+nexi doctor
 ```
 
-**You'll need:**
-- An OpenAI-compatible API (OpenRouter, OpenAI, local, etc.)
-- A Jina AI API key — **free** at [jina.ai](https://jina.ai)
+You will typically need:
+
+- one LLM provider for `nexi`
+- one search provider for `nexi` and `nexi-search`
+- fetch can work immediately with the default zero-config fetch backends
+
+---
+
+## Breaking Change for Upgrades
+
+NEXI 2.0 changes local configuration.
+
+- config now lives at `~/.config/nexi/config.toml`
+- history now lives at `~/.config/nexi/history.jsonl`
+- first run creates the template and exits
+- `nexi config`, `nexi init`, `nexi onboard`, `nexi doctor`, and `nexi clean` are the supported config lifecycle commands
+
+If you are upgrading from pre-2.0 behavior, recreate or review your config instead of assuming the old file layout still applies.
 
 ---
 
 ## Configuration
 
-Config lives at `~/.local/share/nexi/config.json`. Edit with `nexi --edit-config` or:
+Config lives at `~/.config/nexi/config.toml`.
 
-```json
-{
-  "base_url": "https://openrouter.ai/api/v1",
-  "api_key": "sk-or-...",
-  "model": "google/gemini-2.5-flash-lite-preview-09-2025",
-  "jina_key": "jina_...",
-  "default_effort": "m",
-  "time_target": 600,
-  "max_output_tokens": 8000,
-  "max_context": 128000,
-  "auto_compact_thresh": 0.9,
-  "compact_target_words": 5000,
-  "preserve_last_n_messages": 3,
-  "tokenizer_encoding": "cl100k_base"
-}
+NEXI generates a commented template automatically if it is missing. The template enables zero-config fetch defaults and shows commented examples for provider families that require activation.
+
+Useful commands:
+
+- `nexi config` - open the current config file
+- `nexi onboard` - guide a minimal working setup
+- `nexi doctor` - check whether `nexi`, `nexi-search`, and `nexi-fetch` are ready
+- `nexi clean` - reset config and history, then recreate the template
+
+Example shape:
+
+```toml
+llm_backends = []
+search_backends = []
+fetch_backends = ["crawl4ai_local", "markdown_new"]
+
+default_effort = "m"
+max_output_tokens = 8192
+time_target = 600
+
+[providers.markdown_new]
+type = "markdown_new"
+method = "auto"
+retain_images = false
+
+[providers.crawl4ai_local]
+type = "crawl4ai"
+headless = true
+
+# Uncomment one LLM and one search provider.
+# llm_backends = ["openrouter"]
+# search_backends = ["jina"]
+#
+# [providers.openrouter]
+# type = "openai_compatible"
+# base_url = "https://openrouter.ai/api/v1"
+# api_key = "<your_api_key>"
+# model = "google/gemini-2.5-flash-lite"
+#
+# [providers.jina]
+# type = "jina"
+# api_key = "<your_api_key>"
 ```
-
-### Context Management (Auto-Compact)
-
-NEXI automatically manages conversation context to prevent token overflow during long searches:
-
-- **`max_context`**: Model's context window limit (default: 128000)
-- **`auto_compact_thresh`**: Trigger compaction at this fraction of context (default: 0.9 = 90%)
-- **`compact_target_words`**: Target word count for summaries (default: 5000)
-- **`preserve_last_n_messages`**: Number of recent assistant messages to keep un-compacted (default: 3)
-- **`tokenizer_encoding`**: tiktoken encoding name (default: cl100k_base)
-
-When approaching context limits, NEXI:
-1. Extracts metadata (search queries, URLs) from conversation
-2. Generates a dense summary of findings using the LLM
-3. Rebuilds context with preserved messages and summary
-4. Continues search without losing important information
-
-Use `--verbose` to see token counts and compaction details.
 
 ---
 
-## Usage
+## Runtime Surfaces
+
+### `nexi` 🧠
+
+Use the full agent when you want a final answer with citations.
 
 ```bash
-# basic search
 nexi "how do rust async traits work"
-
-# effort levels: s (quick), m (balanced), l (deep)
 nexi -e l "explain quantum entanglement"
-nexi -e s "what is a test"
-
-# pipe it
-echo "what is this" | nexi
-
-# interactive REPL
-nexi
-
-# history
-nexi --last 5      # show last 5 searches
-nexi --prev        # show full result of latest search
-nexi --show abc123 # show specific search by ID
-
-# scripting
-nexi --plain "no colors/emojis"
-nexi --verbose "see all the LLM calls"
+nexi --plain "script-friendly output"
+nexi --verbose "show all tool calls"
 ```
 
-### CLI Options
+### `nexi-search` 🔎
 
-| Flag | Description |
-|------|-------------|
-| `query` | Search query (positional, optional) |
-| `-e, --effort s/m/l` | Search depth: small/medium/large (default: m) |
-| `-v, --verbose` | Show LLM calls, tokens, tool execution |
-| `--plain` | No colors/emojis, script-friendly |
-| `--max-len N` | Limit output token length |
-| `--max-iter N` | Max search iterations |
-| `--time-target N` | Soft limit: force final answer after N seconds |
-| `--last N` | Show last N searches |
-| `--prev` | Show full result of latest search |
-| `--show ID` | Show specific search by ID |
-| `--clear-history` | Wipe search history |
-| `--config` | Show config file path |
-| `--edit-config` | Open config in editor |
+Use direct search when you want raw search-provider results without the agent loop.
 
-### Effort Levels
+```bash
+nexi-search "rust async trait objects"
+nexi-search --json "rust async trait objects"
+```
 
-| Level | Description | When to use |
-|-------|-------------|-------------|
-| `s` | Quick search (8 iterations) | Simple facts, definitions |
-| `m` | Balanced (16 iterations) | Most queries |
-| `l` | Deep research (32 iterations) | Complex topics |
+### `nexi-fetch` 📄
+
+Use direct fetch when you want page content or extraction without the full agent.
+
+```bash
+nexi-fetch "https://example.com/spec"
+nexi-fetch --json "https://example.com/spec"
+nexi-fetch --full "https://example.com/spec"
+```
 
 ---
 
-## Troubleshooting
+## Common Commands
 
-| Issue | Fix |
-|-------|-----|
-| 401 Unauthorized | Check API keys in config |
-| 429 Rate Limit | Wait or switch to different/cheaper model |
-| Time target hit | Increase `time_target` or use `--time-target` |
-| UTF-8 garbled (Windows) | Use `--plain` or Windows Terminal |
+### Main CLI ✨
+
+| Command | Description |
+|---------|-------------|
+| `nexi "query"` | Run the full agentic workflow |
+| `nexi -e s|m|l "query"` | Set quick, balanced, or deep effort |
+| `nexi --plain "query"` | Plain output for scripts |
+| `nexi --max-iter N "query"` | Override search iterations |
+| `nexi --time-target N "query"` | Force answer after N seconds |
+| `nexi --last N` | Show the last N search previews |
+| `nexi --prev` | Show the latest full result |
+| `nexi --show ID` | Show one saved result by ID |
+
+### Direct Tools 🔧
+
+| Command | Description |
+|---------|-------------|
+| `nexi-search "query"` | Run direct search without the agent loop |
+| `nexi-search --json "query"` | Return structured search output |
+| `nexi-fetch "url"` | Run direct fetch or extraction |
+| `nexi-fetch --json "url"` | Return structured fetch output |
+| `nexi-fetch --full "url"` | Return full fetched content |
+
+### Config Lifecycle 🧾
+
+| Command | Description |
+|---------|-------------|
+| `nexi config` | Open the current config file |
+| `nexi init` | Create the default config template if missing |
+| `nexi onboard` | Guided activation of a basic provider setup |
+| `nexi doctor` | Validate config and readiness |
+| `nexi clean` | Reset config/history and recreate the template |
 
 ---
 
 ## MCP Server
 
-NEXI can run as an MCP (Model Context Protocol) server, providing a `nexi_search` tool to MCP-compatible applications like Claude Desktop.
+NEXI can run as an MCP server and now mirrors the same three runtime surfaces.
 
-### Installation
+### MCP Tools 🔌
+
+| Tool | Mirrors | Purpose |
+|------|---------|---------|
+| `nexi_agent` | `nexi` | Full agentic research workflow |
+| `nexi_search` | `nexi-search` | Direct search-provider execution |
+| `nexi_fetch` | `nexi-fetch` | Direct fetch or extraction |
+
+### Installation 📦
 
 ```bash
-# Install with MCP support
 uv sync --group mcp
 # or
 pip install -e ".[mcp]"
 ```
 
-### Running the Server
+### Running the Server 🚀
 
-**STDIO transport (for local MCP clients):**
 ```bash
+# STDIO transport
 python -m nexi.mcp_server_cli
-# or
-uv run python -m nexi.mcp_server_cli
-```
 
-**HTTP transport (for network access):**
-```bash
+# HTTP transport
 python -m nexi.mcp_server_cli http 0.0.0.0 8000
-# or
-uv run python -m nexi.mcp_server_cli http 0.0.0.0 8000
 ```
 
-### MCP Tool: `nexi_search`
-
-**Parameters:**
-- `query` (required): The search query
-- `effort` (optional): "s" (quick), "m" (medium, default), "l" (deep)
-- `max_iter` (optional): Override max iterations
-- `time_target` (optional): Soft limit: force final answer after N seconds
-- `verbose` (optional): Show detailed progress
-
-**Returns:** Comprehensive answer with sources in markdown format, including metadata (iterations, duration, tokens, URLs).
-
-### Claude Desktop Configuration
-
-Add to your Claude Desktop MCP config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS, or equivalent on other platforms):
+### Claude Desktop Configuration 🤖
 
 ```json
 {
@@ -216,18 +327,23 @@ Add to your Claude Desktop MCP config (`~/Library/Application Support/Claude/cla
 }
 ```
 
-For HTTP transport:
-```json
-{
-  "mcpServers": {
-    "nexi": {
-      "url": "http://localhost:8000"
-    }
-  }
-}
-```
+See `docs/MCP_SERVER.md` for more details.
 
-See [MCP_SERVER.md](docs/MCP_SERVER.md) for more details.
+---
+
+## Troubleshooting
+
+When something breaks, the answer is usually: run `nexi doctor`, check which chain is active, and see which provider is being a little goblin today.
+
+| Issue | Fix |
+|-------|-----|
+| Config created then exit | Open `~/.config/nexi/config.toml`, activate providers, or run `nexi onboard` |
+| `nexi` not ready | Run `nexi doctor`; you need one usable LLM provider and one usable search provider |
+| `nexi-search` not ready | Run `nexi doctor`; you need one usable search provider |
+| `nexi-fetch` not ready | Run `nexi doctor`; you need one usable fetch provider |
+| 401 Unauthorized | Check the active provider `api_key` |
+| 429 Rate Limit | Wait, reduce load, or switch providers |
+| UTF-8 garbled on Windows | Use Windows Terminal or `--plain` |
 
 ---
 

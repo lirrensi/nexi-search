@@ -39,7 +39,7 @@ class HistoryEntry:
 
 def get_history_path() -> Path:
     """Get path to history file."""
-    return HISTORY_FILE
+    return CONFIG_DIR / "history.jsonl"
 
 
 def add_history_entry(entry: HistoryEntry) -> None:
@@ -48,9 +48,10 @@ def add_history_entry(entry: HistoryEntry) -> None:
     Args:
         entry: History entry to add
     """
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    history_file = get_history_path()
+    history_file.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(HISTORY_FILE, "a", encoding="utf-8") as f:
+    with open(history_file, "a", encoding="utf-8") as f:
         json_line = json.dumps(entry.to_dict(), ensure_ascii=False)
         f.write(json_line + "\n")
 
@@ -64,11 +65,12 @@ def get_last_n_entries(n: int) -> list[HistoryEntry]:
     Returns:
         List of history entries, most recent first
     """
-    if not HISTORY_FILE.exists():
+    history_file = get_history_path()
+    if not history_file.exists():
         return []
 
     entries = []
-    with open(HISTORY_FILE, encoding="utf-8") as f:
+    with open(history_file, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if line:
@@ -92,10 +94,11 @@ def get_entry_by_id(entry_id: str) -> HistoryEntry | None:
     Returns:
         History entry or None if not found
     """
-    if not HISTORY_FILE.exists():
+    history_file = get_history_path()
+    if not history_file.exists():
         return None
 
-    with open(HISTORY_FILE, encoding="utf-8") as f:
+    with open(history_file, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if line:
@@ -121,8 +124,9 @@ def get_latest_entry() -> HistoryEntry | None:
 
 def clear_history() -> None:
     """Delete all history."""
-    if HISTORY_FILE.exists():
-        HISTORY_FILE.unlink()
+    history_file = get_history_path()
+    if history_file.exists():
+        history_file.unlink()
 
 
 def create_entry(

@@ -7,6 +7,7 @@ from typing import Any
 from nexi.backends.base import FetchProvider, LLMProvider, SearchProvider
 from nexi.backends.brave import BraveSearchProvider
 from nexi.backends.crawl4ai import Crawl4AIFetchProvider
+from nexi.backends.custom_python import build_custom_provider_class, is_custom_provider_type
 from nexi.backends.exa import ExaFetchProvider, ExaSearchProvider
 from nexi.backends.firecrawl import FirecrawlFetchProvider, FirecrawlSearchProvider
 from nexi.backends.jina import JinaFetchProvider, JinaSearchProvider
@@ -62,6 +63,8 @@ def _resolve_provider(
 
     provider_class = registry.get(provider_type)
     if provider_class is None:
+        if is_custom_provider_type(provider_type):
+            return build_custom_provider_class(capability, provider_name, provider_type)
         raise ValueError(
             f"Unsupported {capability} provider type '{provider_type}' for provider '{provider_name}'"
         )

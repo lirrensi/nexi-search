@@ -7,11 +7,12 @@ from nexi.config import (
     EFFORT_LEVELS,
     EXTRACTOR_PROMPT_TEMPLATE,
     Config,
+    ConfigCreatedError,
     ensure_config,
+    format_config_created_message,
     get_config_path,
     get_system_prompt,
     load_config,
-    run_first_time_setup,
     save_config,
 )
 from nexi.history import (
@@ -53,11 +54,12 @@ from nexi.tools import (
 __all__ = [
     "__version__",
     "Config",
+    "ConfigCreatedError",
     "ensure_config",
+    "format_config_created_message",
     "get_config_path",
     "load_config",
     "save_config",
-    "run_first_time_setup",
     "get_system_prompt",
     "DEFAULT_SYSTEM_PROMPT_TEMPLATE",
     "EXTRACTOR_PROMPT_TEMPLATE",

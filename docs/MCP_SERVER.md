@@ -34,21 +34,46 @@ python -m nexi.mcp_server_cli http 0.0.0.0 8000
 uv run python -m nexi.mcp_server_cli http 0.0.0.0 8000
 ```
 
-## Available Tool
+## Available Tools
 
-### `nexi_search`
+### `nexi_agent`
 
-Perform an intelligent web search using NEXI.
+Run the full NEXI agent. This is the MCP counterpart to `nexi`.
 
 **Parameters:**
 - `query` (required): The search query to investigate
 - `effort` (optional): Search depth - "s" (quick), "m" (medium, default), "l" (deep)
 - `max_iter` (optional): Override maximum search iterations
-- `max_timeout` (optional): Force return after N seconds
+- `time_target` (optional): Force return after N seconds
 - `verbose` (optional): Show detailed progress
 
 **Returns:**
 Comprehensive answer with sources cited in markdown format, including metadata about iterations, duration, tokens, and source URLs.
+
+### `nexi_search`
+
+Run the direct search backend chain. This is the MCP counterpart to `nexi-search`.
+
+**Parameters:**
+- `query` (required): Search query
+- `verbose` (optional): Show provider debug output
+
+**Returns:**
+Structured search payload matching `nexi-search --json`, including `searches` and `provider_failures`.
+
+### `nexi_fetch`
+
+Run the direct fetch backend chain. This is the MCP counterpart to `nexi-fetch`.
+
+**Parameters:**
+- `urls` (required): One or more URLs to fetch
+- `full` (optional): Return full fetched content without extraction
+- `chunks` (optional): Use chunk selection instead of summarization
+- `instructions` (optional): Custom extraction instructions
+- `verbose` (optional): Show provider debug output
+
+**Returns:**
+Structured fetch payload matching `nexi-fetch --json`, including `pages` and `provider_failures`.
 
 ## Example MCP Client Configuration
 
@@ -88,6 +113,9 @@ fastmcp run nexi/mcp_server.py --reload
 
 ## Notes
 
-- The MCP server uses the same configuration as the CLI tool (`~/.local/share/nexi/config.json`)
-- All searches run synchronously within the MCP tool context
-- The tool returns formatted markdown with metadata for easy parsing
+- The MCP server uses the same configuration as the CLI tool (`~/.config/nexi/config.toml`)
+- If the config file is missing, NEXI creates the default template and returns a config-created message instead of launching onboarding automatically
+- `nexi_agent` requires a usable LLM provider and a usable search provider
+- `nexi_search` requires a usable search provider
+- `nexi_fetch` requires a usable fetch provider
+- MCP tool names intentionally mirror the runtime surfaces they expose

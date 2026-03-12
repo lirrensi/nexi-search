@@ -8,7 +8,8 @@ from typing import Any
 
 import click
 
-from nexi.config import ensure_config
+from nexi.config import ConfigCreatedError, ensure_config, format_config_created_message
+from nexi.config_doctor import check_command_readiness
 from nexi.tools import web_get
 
 
@@ -47,7 +48,17 @@ def main(
     verbose: bool,
 ) -> None:
     """Run direct fetch/extraction using configured backend orchestration."""
-    config = ensure_config()
+    try:
+        config = ensure_config()
+    except ConfigCreatedError as exc:
+        raise click.ClickException(format_config_created_message(exc.config_path)) from exc
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    readiness_errors = check_command_readiness(config, "nexi-fetch")
+    if readiness_errors:
+        raise click.ClickException("; ".join(readiness_errors))
+
     payload = asyncio.run(
         web_get(
             urls=list(urls),

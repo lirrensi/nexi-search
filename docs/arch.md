@@ -158,7 +158,7 @@ NEXI is an intelligent research CLI that uses an agentic search loop powered by 
 - stdin support for piping queries
 - Interactive REPL mode with conversation history
 - History management commands
-- Config editing/viewing
+- Config lifecycle commands: `config`, `init`, `onboard`, `doctor`, `clean`
 - `--json` output mode for `nexi-search` and `nexi-fetch`
 - stdout-first design so shell redirection/piping handles file output
 
@@ -177,6 +177,12 @@ NEXI is an intelligent research CLI that uses an agentic search loop powered by 
 ### 2. Configuration Management (`nexi/config.py`)
 
 **Purpose**: Load, validate, and manage user configuration
+
+**Storage Layout**:
+- Config directory: `~/.config/nexi/`
+- Config file: `~/.config/nexi/config.toml`
+- History file: `~/.config/nexi/history.jsonl`
+- Config and history live together so reset, backup, and inspection are local to one directory
 
 **Config Structure**:
 ```python
@@ -206,15 +212,33 @@ class Config:
 - A provider config object MAY include `api_key`, `base_url`, `model`, headers, rate limits, or provider-specific tuning knobs
 - A listed provider instance MUST exist in `providers`
 - Each provider class MUST validate its own config before execution
+- Supported and planned provider families are defined canonically in `docs/provider-matrix.md`
 
 **Key Functions**:
-- `load_config()`: Load from `~/.local/share/nexi/config.json`
+- `load_config()`: Load from `~/.config/nexi/config.toml`
 - `save_config()`: Persist configuration
-- `validate_config()`: Validate top-level fields, provider references, and global settings
-- `ensure_config()`: Load or run first-time setup
-- `run_first_time_setup()`: Interactive configuration wizard
+- `validate_config()`: Validate TOML structure, provider references, and global settings
+- `ensure_config()`: Load config or create the default template and stop the run
+- `write_default_template()`: Create the default commented TOML template when config is missing
+- `run_onboarding()`: Optional guided activation of a basic LLM + search setup
+- `run_doctor()`: Check config syntax, active chains, required secrets, and command usability
 - `get_system_prompt()`: Generate system prompt with effort level
 - `get_compaction_prompt()`: Generate prompt for conversation summarization
+
+**Bootstrap Rules**:
+- Missing config MUST create the default TOML template and exit immediately
+- The generated template MUST contain all shipped providers as visible config blocks
+- Inactive providers SHOULD remain commented out in the generated template
+- Zero-config fetch providers SHOULD be enabled by default in the template
+- LLM and search providers SHOULD require explicit activation by the user
+- `nexi onboard` is optional and MUST NOT run automatically on first use
+
+**Doctor Rules**:
+- `nexi doctor` MUST report both parse/shape errors and practical readiness errors
+- For `nexi`, doctor MUST require at least one usable LLM provider and one usable search provider
+- For `nexi-search`, doctor MUST require at least one usable search provider
+- For `nexi-fetch`, doctor MUST require at least one usable fetch provider
+- Readiness checks MUST verify required provider fields for the active chains, not just TOML syntax
 
 **Prompt Templates**:
 - `DEFAULT_SYSTEM_PROMPT_TEMPLATE`: Instructions for the search agent
@@ -671,7 +695,7 @@ Findings:
 
 **Purpose**: Persist and retrieve search history
 
-**Storage**: `~/.local/share/nexi/history.jsonl` (JSON Lines format)
+**Storage**: `~/.config/nexi/history.jsonl` (JSON Lines format)
 
 **HistoryEntry Data Structure**:
 ```python
@@ -751,16 +775,39 @@ class HistoryEntry:
 
 **Purpose**: Expose NEXI as a Model Context Protocol server
 
-**Tool**: `nexi_search`
+**Tools**:
+- `nexi_agent`: Full agent surface. Mirrors `nexi` and runs the LLM-driven search loop.
+- `nexi_search`: Direct search surface. Mirrors `nexi-search` and runs the configured search provider chain without the agent loop.
+- `nexi_fetch`: Direct fetch surface. Mirrors `nexi-fetch` and runs the configured fetch provider chain without the agent loop.
 
-**Parameters**:
-- `query` (required): Search query
-- `effort` (optional): "s", "m", or "l" (default: "m")
-- `max_iter` (optional): Override max iterations
-- `time_target` (optional): Force return after N seconds
-- `verbose` (optional): Show detailed progress
+**Tool Parameters**:
+- `nexi_agent`
+  - `query` (required): Search query
+  - `effort` (optional): "s", "m", or "l" (default: "m")
+  - `max_iter` (optional): Override max iterations
+  - `time_target` (optional): Force return after N seconds
+  - `verbose` (optional): Show detailed progress
+- `nexi_search`
+  - `query` (required): Search query
+  - `verbose` (optional): Show provider debug output
+- `nexi_fetch`
+  - `urls` (required): One or more URLs to fetch
+  - `full` (optional): Return full fetched content without extraction
+  - `chunks` (optional): Use chunk selection instead of summarization
+  - `instructions` (optional): Custom extraction instructions
+  - `verbose` (optional): Show provider debug output
 
-**Returns**: Markdown-formatted answer with metadata and sources
+**Returns**:
+- `nexi_agent`: Markdown-formatted answer with metadata and sources
+- `nexi_search`: Structured direct-search payload matching the `nexi-search --json` shape
+- `nexi_fetch`: Structured direct-fetch payload matching the `nexi-fetch --json` shape
+
+**Contracts / Invariants**:
+- MCP tool naming MUST match the runtime surface it exposes
+- `nexi_agent` MUST be the only MCP tool that runs the agentic LLM search loop
+- `nexi_search` MUST follow the same readiness rules as `nexi-search`
+- `nexi_fetch` MUST follow the same readiness rules as `nexi-fetch`
+- `nexi/mcp_server_cli.py` MUST be a first-class CLI entrypoint with explicit transport validation
 
 **Transport Options**:
 - **STDIO** (default): For local MCP clients (Claude Desktop)
@@ -887,9 +934,16 @@ Interactive Mode Started
 
 ## Configuration Rules
 
+### File Format and Lifecycle
+
+- The canonical user config file MUST be TOML, not JSON
+- The canonical path MUST be `~/.config/nexi/config.toml`
+- If the file is missing, NEXI MUST create the default commented template and stop the current command
+- The generated template MAY be structurally incomplete for search until the user activates one LLM provider and one search provider
+
 ### Required Fields
 
-All configurations must include:
+All saved configurations must include:
 - `llm_backends`: Ordered list of provider names for LLM execution
 - `search_backends`: Ordered list of provider names for search execution
 - `fetch_backends`: Ordered list of provider names for fetch execution
@@ -911,9 +965,9 @@ All configurations must include:
 
 ### Validation Rules
 
-1. **llm_backends / search_backends / fetch_backends**: Must be non-empty ordered lists when that capability is required by the command
-2. **providers**: Must be an object keyed by provider instance name
-3. **listed providers**: Every name in a backend chain MUST exist in `providers`
+1. **TOML parse**: The config file MUST parse as valid TOML
+2. **providers**: Must be a table keyed by provider instance name
+3. **listed providers**: Every name in an active backend chain MUST exist in `providers`
 4. **provider type**: Every provider config object MUST include a supported `type`
 5. **provider config**: Each provider class MUST validate its own required fields before execution
 6. **default_effort**: Must be in `["s", "m", "l"]`
@@ -926,6 +980,10 @@ All configurations must include:
 13. **tokenizer_encoding**: Must be non-empty string
 14. **provider_timeout**: Must be positive integer
 15. **search_provider_retries / fetch_provider_retries**: Must be positive integers
+16. **usable `nexi` config**: MUST include at least one usable LLM provider and one usable search provider
+17. **usable `nexi-search` config**: MUST include at least one usable search provider
+18. **usable `nexi-fetch` config**: MUST include at least one usable fetch provider
+19. **template state**: Empty `llm_backends` or `search_backends` MAY exist in the generated template, but MUST fail readiness checks until activated
 
 ---
 
@@ -1039,8 +1097,9 @@ The search loop terminates when **any** of these conditions are met:
 
 ### Configuration Errors
 
-- **FileNotFoundError**: Config file doesn't exist → run first-time setup
-- **ValueError**: Invalid config → show detailed errors and exit
+- **Missing config**: Write `~/.config/nexi/config.toml`, print path, warn that configuration is incomplete, exit immediately
+- **Invalid config**: Show detailed errors and exit
+- **Doctor failure**: Report actionable readiness issues without mutating the file unless explicitly asked
 
 ### Search Errors
 
@@ -1107,7 +1166,7 @@ The search loop terminates when **any** of these conditions are met:
 
 ### API Keys
 
-- Stored in `~/.local/share/nexi/config.json`
+- Stored in `~/.config/nexi/config.toml`
 - File permissions: User-readable only (OS-dependent)
 - Provider credentials live inside `providers[provider_name]`
 - Never logged or printed in verbose mode
@@ -1128,6 +1187,7 @@ The search loop terminates when **any** of these conditions are met:
 
 - Stored locally in JSONL format
 - Contains queries and answers
+- Only completed searches are persisted
 - No sensitive data unless user includes it
 
 ---
@@ -1156,32 +1216,25 @@ NEXI supports swappable provider chains for LLM, search, and fetch capabilities.
    - Keep provider selection declarative through config, not hardcoded conditionals
 
 3. **Provider Configuration**:
-   - Add a config object under `providers[provider_name]`
-   - Set `providers[provider_name]["type"]` to the registered provider type
-   - Add the provider name to one or more ordered chains: `llm_backends`, `search_backends`, `fetch_backends`
+    - Add a config object under `providers[provider_name]`
+    - Set `providers[provider_name]["type"]` to the registered provider type
+    - Add the provider name to one or more ordered chains: `llm_backends`, `search_backends`, `fetch_backends`
 
 Example configuration:
-```python
-config = Config(
-    llm_backends=["openrouter", "openai"],
-    search_backends=["jina"],
-    fetch_backends=["jina"],
-    providers={
-        "openrouter": {
-            "type": "openai_compatible",
-            "base_url": "https://openrouter.ai/api/v1",
-            "api_key": "key123",
-            "model": "google/gemini-2.5-flash-lite",
-        },
-        "openai": {
-            "type": "openai_compatible",
-            "base_url": "https://api.openai.com/v1",
-            "api_key": "key456",
-            "model": "gpt-4.1-mini",
-        },
-    },
-    ...
-)
+```toml
+llm_backends = ["openrouter"]
+search_backends = ["jina"]
+fetch_backends = ["crawl4ai_local", "markdown_new"]
+
+[providers.openrouter]
+type = "openai_compatible"
+base_url = "https://openrouter.ai/api/v1"
+api_key = "key123"
+model = "google/gemini-2.5-flash-lite"
+
+[providers.jina]
+type = "jina"
+api_key = "key456"
 ```
 
 ### Custom Prompts
@@ -1303,8 +1356,9 @@ config = Config(
 - **Support modules**: `nexi/compaction.py`, `nexi/citations.py`, `nexi/token_counter.py`
 - **Output**: `nexi/output.py`, `nexi/history.py`, `nexi/errors.py`
 - **MCP**: `nexi/mcp_server.py`, `nexi/mcp_server_cli.py`
-- **Config location**: `~/.local/share/nexi/config.json`
-- **History location**: `~/.local/share/nexi/history.jsonl`
+- **Provider catalog**: `docs/provider-matrix.md`
+- **Config location**: `~/.config/nexi/config.toml`
+- **History location**: `~/.config/nexi/history.jsonl`
 
 ---
 

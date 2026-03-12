@@ -41,7 +41,7 @@ NEXI is an intelligent research CLI built around an agentic search loop powered 
 
 ### Integration
 
-- **MCP Server** — Expose NEXI as a Model Context Protocol tool for Claude Desktop and other MCP clients
+- **MCP Server** — Expose NEXI as Model Context Protocol tools for the full agent, direct search, and direct fetch surfaces
 - **Provider-Orchestrated LLM Access** — Works with multiple OpenAI-compatible providers via ordered fallback chains
 - **Provider-Orchestrated Search/Fetch** — Search and content retrieval providers can be mixed, reordered, and replaced independently
 
@@ -106,7 +106,19 @@ NEXI is an intelligent research CLI built around an agentic search loop powered 
 
 ## User Flows
 
-### Flow 1: Quick Search
+### Flow 1: First Run Bootstrap
+
+```bash
+nexi "what is the deal with rust async traits"
+```
+
+1. User runs NEXI without an existing config
+2. NEXI creates `~/.config/nexi/config.toml` from the default commented template
+3. NEXI prints the config path and a prominent warning that the config is still incomplete
+4. NEXI exits immediately without starting a search
+5. User opens the file with `nexi config` or runs `nexi onboard`
+
+### Flow 2: Quick Search
 
 ```bash
 nexi "how do rust async traits work"
@@ -118,7 +130,19 @@ nexi "how do rust async traits work"
 4. Answer displayed with citations
 5. Search saved to history
 
-### Flow 2: Deep Research
+### Flow 3: Optional Onboarding
+
+```bash
+nexi onboard
+```
+
+1. User already has the generated TOML template
+2. NEXI runs a small wizard focused on the basics
+3. Wizard helps activate one LLM provider and one search provider
+4. Existing zero-config fetch defaults stay enabled unless the user changes them
+5. Advanced settings remain in the file for manual editing
+
+### Flow 4: Deep Research
 
 ```bash
 nexi -e l "explain quantum entanglement and its applications"
@@ -129,7 +153,7 @@ nexi -e l "explain quantum entanglement and its applications"
 3. Context compaction triggers if needed
 4. Comprehensive answer with many sources
 
-### Flow 3: Interactive Multi-Turn
+### Flow 5: Interactive Multi-Turn
 
 ```bash
 nexi
@@ -141,7 +165,7 @@ nexi
 4. LLM can reference previous findings
 5. Type `exit` to quit
 
-### Flow 4: Scripted Usage
+### Flow 6: Scripted Usage
 
 ```bash
 echo "what is the capital of france" | nexi --plain
@@ -151,7 +175,18 @@ echo "what is the capital of france" | nexi --plain
 2. Plain output (no colors/emoji)
 3. Suitable for scripting and automation
 
-### Flow 5: MCP Integration
+### Flow 7: Recover Last Finished Result
+
+```bash
+nexi --prev
+```
+
+1. User asks for the latest completed search result
+2. NEXI reads `~/.config/nexi/history.jsonl`
+3. The most recent finished entry is printed in full
+4. This recovers completed backgrounded runs, but not in-progress searches
+
+### Flow 8: MCP Integration
 
 ```json
 {
@@ -164,11 +199,11 @@ echo "what is the capital of france" | nexi --plain
 }
 ```
 
-1. Claude Desktop calls `nexi_search` tool
-2. NEXI performs search
-3. Returns markdown-formatted answer with metadata
+1. Claude Desktop calls one of `nexi_agent`, `nexi_search`, or `nexi_fetch`
+2. NEXI routes the request to the matching runtime surface
+3. Agent calls return synthesized answers with metadata; direct tools return search or fetch payloads
 
-### Flow 6: Direct Search Tool
+### Flow 9: Direct Search Tool
 
 ```bash
 nexi-search "rust async trait objects"
@@ -179,7 +214,7 @@ nexi-search "rust async trait objects"
 3. Failed queries retry within the active provider, then fall through to the next provider
 4. Plain text or JSON results are written to stdout
 
-### Flow 7: Direct Fetch Tool
+### Flow 10: Direct Fetch Tool
 
 ```bash
 nexi-fetch "https://example.com/spec"
@@ -217,6 +252,14 @@ nexi-fetch "https://example.com/spec"
 | `nexi-fetch "url"` | Fetch/extract content from one or more URLs |
 | `nexi-fetch --json "url"` | Return structured fetch results for scripts/agents |
 
+### MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `nexi_agent` | Full agentic workflow exposed over MCP; mirrors `nexi` |
+| `nexi_search` | Direct backend search tool exposed over MCP; mirrors `nexi-search` |
+| `nexi_fetch` | Direct backend fetch tool exposed over MCP; mirrors `nexi-fetch` |
+
 ### History Commands
 
 | Command | Description |
@@ -230,8 +273,11 @@ nexi-fetch "https://example.com/spec"
 
 | Command | Description |
 |---------|-------------|
-| `nexi --config` | Print config file path |
-| `nexi --edit-config` | Open config in $EDITOR |
+| `nexi config` | Open the current config file in the user's editor |
+| `nexi init` | Create the default config template if no config exists |
+| `nexi onboard` | Run the small guided setup for basic provider activation |
+| `nexi doctor` | Check whether the current config is valid and usable |
+| `nexi clean` | Reset local config/history and recreate a fresh template |
 
 ### Interactive Mode
 
@@ -273,6 +319,7 @@ The search loop **MUST** terminate when **any** of these conditions are met:
 
 ### Error Handling
 
+- Missing config does not start a search - NEXI creates the template, prints the path, warns, and exits
 - Individual tool failures do not abort search — errors returned in results
 - Search and fetch retry failed items within the active provider before failing over
 - LLM provider failures trigger immediate provider failover for the current run
@@ -292,7 +339,22 @@ The search loop **MUST** terminate when **any** of these conditions are met:
 
 ## Configuration
 
-### Required Fields
+### Format and Location
+
+- **Config path**: `~/.config/nexi/config.toml`
+- **History path**: `~/.config/nexi/history.jsonl`
+- **Format**: TOML with comments in the generated template
+- **Primary editing path**: `nexi config`
+
+### Bootstrap Rules
+
+- If `config.toml` is missing, NEXI MUST generate the default template and exit immediately
+- The generated template MUST show all shipped providers, with inactive providers commented out
+- The generated template SHOULD keep zero-config fetch providers enabled by default
+- The generated template SHOULD leave LLM and search activation for the user to choose
+- `nexi onboard` MAY modify the active provider chains, but advanced knobs remain file-driven
+
+### Required Fields For A Usable Search Config
 
 | Field | Description |
 |-------|-------------|
@@ -317,43 +379,64 @@ The search loop **MUST** terminate when **any** of these conditions are met:
 | `search_provider_retries` | `2` | Retry attempts per search provider before failover |
 | `fetch_provider_retries` | `2` | Retry attempts per fetch provider before failover |
 
-### Provider Configuration Shape
+### Default Template Shape
 
-```json
-{
-  "llm_backends": ["openrouter", "openai"],
-  "search_backends": ["jina"],
-  "fetch_backends": ["jina"],
-  "providers": {
-    "openrouter": {
-      "type": "openai_compatible",
-      "base_url": "https://openrouter.ai/api/v1",
-      "api_key": "<api_key>",
-      "model": "google/gemini-2.5-flash-lite"
-    },
-    "jina": {
-      "type": "jina",
-      "api_key": "<api_key>"
-    },
-    "openai": {
-      "type": "openai_compatible",
-      "base_url": "https://api.openai.com/v1",
-      "api_key": "<api_key>",
-      "model": "gpt-4.1-mini"
-    }
-  }
-}
+```toml
+# Activate at least one LLM and one search provider before running `nexi`.
+llm_backends = []
+search_backends = []
+fetch_backends = ["crawl4ai_local", "markdown_new"]
+
+default_effort = "m"
+max_output_tokens = 8192
+time_target = 600
+max_context = 128000
+auto_compact_thresh = 0.9
+compact_target_words = 5000
+preserve_last_n_messages = 3
+tokenizer_encoding = "cl100k_base"
+provider_timeout = 30
+search_provider_retries = 2
+fetch_provider_retries = 2
+
+[providers.markdown_new]
+type = "markdown_new"
+method = "auto"
+retain_images = false
+
+[providers.crawl4ai_local]
+type = "crawl4ai"
+headless = true
+
+# Uncomment one LLM provider to activate it.
+# llm_backends = ["openrouter"]
+#
+# [providers.openrouter]
+# type = "openai_compatible"
+# base_url = "https://openrouter.ai/api/v1"
+# api_key = "<your_api_key>"
+# model = "google/gemini-2.5-flash-lite"
+
+# Uncomment one search provider to activate it.
+# search_backends = ["jina"]
+#
+# [providers.jina]
+# type = "jina"
+# api_key = "<your_api_key>"
 ```
 
 - Each listed backend name MUST have a matching entry in `providers`
 - Each provider config object MUST declare its provider `type`
 - Each provider class validates its own config requirements
 - Providers MAY define additional provider-specific settings inside their config object
+- Shipped and planned provider families are defined in [provider-matrix.md](provider-matrix.md)
 
-### Config File Location
+### Result Recovery
 
-- **Path**: `~/.local/share/nexi/config.json`
-- **Edit**: `nexi --edit-config` or open directly
+- `nexi --prev` returns the latest completed history entry
+- `nexi --last N` returns recent completed entries
+- `nexi --show ID` returns one completed entry by ID
+- History does not contain in-progress searches
 
 ---
 
@@ -447,5 +530,6 @@ NEXI deliberately does **NOT** aim to be:
 ## References
 
 - **Architecture**: [arch.md](arch.md) — Complete technical specification
+- **Provider Matrix**: [provider-matrix.md](provider-matrix.md) — Supported and planned provider families
 - **MCP Server**: [MCP_SERVER.md](MCP_SERVER.md) — MCP integration details
 - **OpenAI API**: https://platform.openai.com/docs/api-reference — LLM API reference

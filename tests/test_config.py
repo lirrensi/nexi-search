@@ -1,35 +1,54 @@
-"""Unit tests for config module."""
+"""Unit tests for config bootstrap and TOML serialization."""
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
+import pytest
+
 from nexi import config as config_module
-from nexi.config import DEFAULT_CONFIG, Config, get_compaction_prompt, validate_config
+from nexi.backends.custom_python import get_custom_provider_path
+from nexi.config import (
+    DEFAULT_CONFIG,
+    Config,
+    ConfigCreatedError,
+    get_compaction_prompt,
+    load_config,
+    validate_config,
+)
+from nexi.config_template import render_config_toml, write_default_template
 
 
 def _build_config() -> Config:
     """Create a canonical config fixture."""
     return Config(
-        llm_backends=["openai_default"],
+        llm_backends=["openrouter"],
         search_backends=["jina"],
-        fetch_backends=["jina"],
+        fetch_backends=["crawl4ai_local", "markdown_new"],
         providers={
-            "openai_default": {
+            "openrouter": {
                 "type": "openai_compatible",
-                "base_url": "https://api.test.com/v1",
-                "api_key": "test_key",
-                "model": "test_model",
+                "base_url": "https://openrouter.ai/api/v1",
+                "api_key": "test-key",
+                "model": "test-model",
             },
             "jina": {
                 "type": "jina",
-                "api_key": "test_jina",
+                "api_key": "test-jina",
+            },
+            "crawl4ai_local": {
+                "type": "crawl4ai",
+                "headless": True,
+            },
+            "markdown_new": {
+                "type": "markdown_new",
+                "method": "auto",
+                "retain_images": False,
             },
         },
         default_effort="m",
         max_output_tokens=8192,
-        time_target=600,
+        time_target=None,
         max_context=128000,
         auto_compact_thresh=0.9,
         compact_target_words=5000,
@@ -41,100 +60,217 @@ def _build_config() -> Config:
     )
 
 
+def _patch_config_paths(monkeypatch, tmp_path: Path) -> Path:
+    """Point config module paths at a temporary directory."""
+    config_path = tmp_path / "config.toml"
+    monkeypatch.setattr(config_module, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(config_module, "CONFIG_FILE", config_path)
+    return config_path
+
+
 def test_config_to_dict_round_trip() -> None:
     """Config round-trips through dict serialization."""
     config = _build_config()
-
-    config_dict = config.to_dict()
-    restored = Config.from_dict(config_dict)
-
-    assert restored == config
+    assert Config.from_dict(config.to_dict()) == config
 
 
-def test_validate_config_new_shape_valid() -> None:
-    """Validation accepts the canonical provider-based config shape."""
-    is_valid, errors = validate_config(_build_config().to_dict())
+def test_write_default_template_writes_config_toml(tmp_path: Path) -> None:
+    """The default bootstrap template is written to config.toml."""
+    config_path = tmp_path / "config.toml"
+
+    created = write_default_template(config_path)
+
+    assert created is True
+    assert config_path.exists()
+    text = config_path.read_text(encoding="utf-8")
+    assert "llm_backends = []" in text
+    assert 'fetch_backends = ["crawl4ai_local", "markdown_new"]' in text
+    assert "[providers.markdown_new]" in text
+    assert "# [providers.openrouter]" in text
+    assert text.count("# [providers.jina]") == 1
+    assert "Define each [providers.<name>] table only once" in text
+    assert '# - add "jina" to search_backends' in text
+    assert '# - add "jina" to fetch_backends' in text
+    assert '# search_backends = ["jina"]' not in text
+
+
+def test_render_config_toml_reuses_one_provider_block_for_shared_provider() -> None:
+    """Shared providers are defined once even when used in multiple chains."""
+    text = render_config_toml(
+        {
+            "llm_backends": ["openrouter"],
+            "search_backends": ["jina"],
+            "fetch_backends": ["jina"],
+            "providers": {
+                "openrouter": {
+                    "type": "openai_compatible",
+                    "base_url": "https://openrouter.ai/api/v1",
+                    "api_key": "test-key",
+                    "model": "test-model",
+                },
+                "jina": {
+                    "type": "jina",
+                    "api_key": "test-jina",
+                },
+            },
+        }
+    )
+
+    assert text.count("[providers.jina]") == 1
+    assert 'search_backends = ["jina"]' in text
+    assert 'fetch_backends = ["jina"]' in text
+
+
+def test_load_config_parses_toml(tmp_path: Path, monkeypatch) -> None:
+    """Loading config reads TOML and fills optional defaults."""
+    config_path = _patch_config_paths(monkeypatch, tmp_path)
+    config_path.write_text(
+        """
+llm_backends = ["openrouter"]
+search_backends = ["jina"]
+fetch_backends = ["crawl4ai_local", "markdown_new"]
+
+default_effort = "m"
+max_output_tokens = 8192
+max_context = 128000
+auto_compact_thresh = 0.9
+compact_target_words = 5000
+preserve_last_n_messages = 3
+tokenizer_encoding = "cl100k_base"
+provider_timeout = 30
+search_provider_retries = 2
+fetch_provider_retries = 2
+
+[providers.openrouter]
+type = "openai_compatible"
+base_url = "https://openrouter.ai/api/v1"
+api_key = "test-key"
+model = "test-model"
+
+[providers.jina]
+type = "jina"
+api_key = "test-jina"
+
+[providers.crawl4ai_local]
+type = "crawl4ai"
+headless = true
+
+[providers.markdown_new]
+type = "markdown_new"
+method = "auto"
+retain_images = false
+""".strip(),
+        encoding="utf-8",
+    )
+
+    loaded = load_config()
+
+    assert loaded.llm_backends == ["openrouter"]
+    assert loaded.search_backends == ["jina"]
+    assert loaded.fetch_backends == ["crawl4ai_local", "markdown_new"]
+    assert loaded.providers["openrouter"]["type"] == "openai_compatible"
+    assert loaded.time_target is None
+
+
+def test_load_config_adds_hint_for_duplicate_provider_tables(tmp_path: Path, monkeypatch) -> None:
+    """Duplicate provider tables get a clearer parse error message."""
+    config_path = _patch_config_paths(monkeypatch, tmp_path)
+    config_path.write_text(
+        """
+search_backends = ["jina"]
+fetch_backends = ["jina"]
+llm_backends = []
+default_effort = "m"
+max_output_tokens = 8192
+
+[providers.jina]
+type = "jina"
+api_key = "a"
+
+[providers.jina]
+type = "jina"
+api_key = "b"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError) as excinfo:
+        load_config()
+
+    assert "define each [providers.NAME] table only once" in str(excinfo.value)
+
+
+def test_validate_config_allows_empty_llm_and_search_chains() -> None:
+    """Template-style configs are valid before readiness checks."""
+    is_valid, errors = validate_config(DEFAULT_CONFIG)
+    assert is_valid
+    assert errors == []
+
+
+def test_ensure_config_writes_template_and_raises(tmp_path: Path, monkeypatch) -> None:
+    """Missing config bootstraps the template and stops the command."""
+    config_path = _patch_config_paths(monkeypatch, tmp_path)
+
+    with pytest.raises(ConfigCreatedError) as excinfo:
+        config_module.ensure_config()
+
+    assert excinfo.value.config_path == config_path
+    assert config_path.exists()
+    assert "[providers.crawl4ai_local]" in config_path.read_text(encoding="utf-8")
+
+
+def test_save_config_writes_commented_examples(tmp_path: Path, monkeypatch) -> None:
+    """Saving config preserves inactive provider examples as comments."""
+    config_path = _patch_config_paths(monkeypatch, tmp_path)
+
+    config_module.save_config(_build_config())
+    text = config_path.read_text(encoding="utf-8")
+
+    assert "[providers.openrouter]" in text
+    assert "# [providers.openai]" in text
+    assert "# [providers.custom_search]" in text
+
+
+def test_custom_provider_file_lookup_uses_new_config_dir(tmp_path: Path, monkeypatch) -> None:
+    """Custom provider files resolve under the new config directory."""
+    monkeypatch.setattr(config_module, "CONFIG_DIR", tmp_path)
+
+    assert get_custom_provider_path("provider-custom_api") == tmp_path / "custom_api.py"
+
+
+def test_validate_config_accepts_existing_custom_provider(tmp_path: Path, monkeypatch) -> None:
+    """provider-* types validate when the backing file exists."""
+    (tmp_path / "custom_api.py").write_text(
+        "from __future__ import annotations\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(config_module, "CONFIG_DIR", tmp_path)
+
+    config = _build_config().to_dict()
+    config["llm_backends"] = []
+    config["search_backends"] = ["custom_search"]
+    config["fetch_backends"] = []
+    config["providers"] = {"custom_search": {"type": "provider-custom_api"}}
+
+    is_valid, errors = validate_config(config)
 
     assert is_valid
     assert errors == []
 
 
-def test_validate_config_missing_provider_reference() -> None:
-    """Validation rejects backend chains that reference missing providers."""
+def test_validate_config_rejects_missing_custom_provider_file(tmp_path: Path, monkeypatch) -> None:
+    """provider-* types fail validation when the file is missing."""
+    monkeypatch.setattr(config_module, "CONFIG_DIR", tmp_path)
+
     config = _build_config().to_dict()
-    config["search_backends"] = ["missing"]
+    config["llm_backends"] = []
+    config["search_backends"] = ["custom_search"]
+    config["fetch_backends"] = []
+    config["providers"] = {"custom_search": {"type": "provider-custom_api"}}
 
     is_valid, errors = validate_config(config)
 
     assert not is_valid
-    assert any("search_backends references unknown provider" in error for error in errors)
-
-
-def test_validate_config_requires_provider_type() -> None:
-    """Validation rejects provider configs without a type field."""
-    config = _build_config().to_dict()
-    config["providers"]["jina"] = {"api_key": "test_jina"}
-
-    is_valid, errors = validate_config(config)
-
-    assert not is_valid
-    assert any("providers.jina.type" in error for error in errors)
-
-
-def test_load_config_migrates_legacy_shape(tmp_path: Path, monkeypatch) -> None:
-    """Loading a legacy config migrates it to provider chains."""
-    config_path = tmp_path / "config.json"
-    config_path.write_text(
-        json.dumps(
-            {
-                "base_url": "https://legacy.example/v1",
-                "api_key": "legacy-key",
-                "model": "legacy-model",
-                "jina_key": "legacy-jina",
-                "default_effort": "m",
-                "max_output_tokens": 2048,
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(config_module, "CONFIG_DIR", tmp_path)
-    monkeypatch.setattr(config_module, "CONFIG_FILE", config_path)
-
-    loaded = config_module.load_config()
-
-    assert loaded.llm_backends == ["openai_default"]
-    assert loaded.search_backends == ["jina"]
-    assert loaded.fetch_backends == ["crawl4ai_local", "markdown_new", "jina"]
-    assert loaded.providers["openai_default"]["type"] == "openai_compatible"
-    assert loaded.providers["openai_default"]["base_url"] == "https://legacy.example/v1"
-    assert loaded.providers["openai_default"]["api_key"] == "legacy-key"
-    assert loaded.providers["openai_default"]["model"] == "legacy-model"
-    assert loaded.providers["markdown_new"]["type"] == "markdown_new"
-    assert loaded.providers["crawl4ai_local"]["type"] == "crawl4ai"
-    assert loaded.providers["jina"]["type"] == "jina"
-    assert loaded.providers["jina"]["api_key"] == "legacy-jina"
-    assert loaded.providers["tavily"]["type"] == "tavily"
-    assert loaded.providers["exa"]["type"] == "exa"
-    assert loaded.providers["firecrawl"]["type"] == "firecrawl"
-    assert loaded.providers["linkup"]["type"] == "linkup"
-    assert loaded.providers["brave"]["type"] == "brave"
-    assert loaded.providers["serpapi"]["type"] == "serpapi"
-    assert loaded.providers["serper"]["type"] == "serper"
-    assert loaded.providers["perplexity_search"]["type"] == "perplexity_search"
-
-
-def test_save_config_writes_canonical_shape(tmp_path: Path, monkeypatch) -> None:
-    """Saving config writes only the canonical provider-based shape."""
-    config_path = tmp_path / "config.json"
-    monkeypatch.setattr(config_module, "CONFIG_DIR", tmp_path)
-    monkeypatch.setattr(config_module, "CONFIG_FILE", config_path)
-
-    config_module.save_config(_build_config())
-    saved = json.loads(config_path.read_text(encoding="utf-8"))
-
-    assert "base_url" not in saved
-    assert saved["llm_backends"] == ["openai_default"]
-    assert saved["providers"]["openai_default"]["type"] == "openai_compatible"
+    assert any("missing custom provider file" in error for error in errors)
 
 
 def test_get_compaction_prompt() -> None:
@@ -149,22 +285,3 @@ def test_get_compaction_prompt() -> None:
     assert "test content" in prompt
     assert "1000" in prompt
     assert "PRESERVE EXACTLY" in prompt
-
-
-def test_default_config_has_provider_chains() -> None:
-    """Default config exposes provider chains and provider registry."""
-    assert DEFAULT_CONFIG["llm_backends"] == ["openai_default"]
-    assert DEFAULT_CONFIG["search_backends"] == ["jina"]
-    assert DEFAULT_CONFIG["fetch_backends"] == ["crawl4ai_local", "markdown_new", "jina"]
-    assert DEFAULT_CONFIG["providers"]["openai_default"]["type"] == "openai_compatible"
-    assert DEFAULT_CONFIG["providers"]["markdown_new"]["type"] == "markdown_new"
-    assert DEFAULT_CONFIG["providers"]["crawl4ai_local"]["type"] == "crawl4ai"
-    assert DEFAULT_CONFIG["providers"]["jina"]["type"] == "jina"
-    assert DEFAULT_CONFIG["providers"]["tavily"]["type"] == "tavily"
-    assert DEFAULT_CONFIG["providers"]["exa"]["type"] == "exa"
-    assert DEFAULT_CONFIG["providers"]["firecrawl"]["type"] == "firecrawl"
-    assert DEFAULT_CONFIG["providers"]["linkup"]["type"] == "linkup"
-    assert DEFAULT_CONFIG["providers"]["brave"]["type"] == "brave"
-    assert DEFAULT_CONFIG["providers"]["serpapi"]["type"] == "serpapi"
-    assert DEFAULT_CONFIG["providers"]["serper"]["type"] == "serper"
-    assert DEFAULT_CONFIG["providers"]["perplexity_search"]["type"] == "perplexity_search"

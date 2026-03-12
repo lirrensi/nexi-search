@@ -2,18 +2,30 @@
 
 from __future__ import annotations
 
-import json
 import secrets
+import tomllib
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import questionary
+from nexi.backends.custom_python import get_custom_provider_path, is_custom_provider_type
+from nexi.config_template import (
+    ACTIVE_FETCH_PROVIDER_DEFAULTS,
+    DEFAULT_CHAIN_CONFIG,
+    DEFAULT_SCALAR_CONFIG,
+    render_config_toml,
+    write_default_template,
+)
 
-CONFIG_DIR = Path.home() / ".local" / "share" / "nexi"
-CONFIG_FILE = CONFIG_DIR / "config.json"
+CONFIG_DIR = Path.home() / ".config" / "nexi"
+CONFIG_FILE = CONFIG_DIR / "config.toml"
+
+CONFIG_CREATED_MESSAGE = (
+    "Created a config template. Fill it in and activate one LLM provider and one "
+    "search provider before running NEXI."
+)
 
 EFFORT_LEVELS = {
     "s": {"max_iter": 8, "description": "Quick search"},
@@ -22,87 +34,21 @@ EFFORT_LEVELS = {
 }
 
 DEFAULT_CONFIG = {
-    "llm_backends": ["openai_default"],
-    "search_backends": ["jina"],
-    "fetch_backends": ["crawl4ai_local", "markdown_new", "jina"],
-    "providers": {
-        "openai_default": {
-            "type": "openai_compatible",
-            "base_url": "https://openrouter.ai/api/v1",
-            "api_key": "",
-            "model": "google/gemini-2.5-flash-lite",
-        },
-        "markdown_new": {
-            "type": "markdown_new",
-            "method": "auto",
-            "retain_images": False,
-        },
-        "crawl4ai_local": {
-            "type": "crawl4ai",
-            "headless": True,
-        },
-        "jina": {
-            "type": "jina",
-            "api_key": "",
-        },
-        "tavily": {
-            "type": "tavily",
-            "api_key": "",
-            "search_depth": "basic",
-            "topic": "general",
-            "max_results": 5,
-        },
-        "exa": {
-            "type": "exa",
-            "api_key": "",
-            "num_results": 5,
-            "text": True,
-        },
-        "firecrawl": {
-            "type": "firecrawl",
-            "api_key": "",
-            "only_main_content": True,
-            "formats": ["markdown"],
-            "limit": 5,
-        },
-        "linkup": {
-            "type": "linkup",
-            "api_key": "",
-            "depth": "standard",
-            "output_type": "searchResults",
-        },
-        "brave": {
-            "type": "brave",
-            "api_key": "",
-            "count": 5,
-        },
-        "serpapi": {
-            "type": "serpapi",
-            "api_key": "",
-            "engine": "google",
-        },
-        "serper": {
-            "type": "serper",
-            "api_key": "",
-            "num": 5,
-        },
-        "perplexity_search": {
-            "type": "perplexity_search",
-            "api_key": "",
-            "max_results": 5,
-        },
-    },
-    "default_effort": "m",
-    "max_output_tokens": 8192,
-    "time_target": None,
-    "max_context": 128000,
-    "auto_compact_thresh": 0.9,
-    "compact_target_words": 5000,
-    "preserve_last_n_messages": 3,
-    "tokenizer_encoding": "cl100k_base",
-    "provider_timeout": 30,
-    "search_provider_retries": 2,
-    "fetch_provider_retries": 2,
+    "llm_backends": deepcopy(DEFAULT_CHAIN_CONFIG["llm_backends"]),
+    "search_backends": deepcopy(DEFAULT_CHAIN_CONFIG["search_backends"]),
+    "fetch_backends": deepcopy(DEFAULT_CHAIN_CONFIG["fetch_backends"]),
+    "providers": deepcopy(ACTIVE_FETCH_PROVIDER_DEFAULTS),
+    "default_effort": DEFAULT_SCALAR_CONFIG["default_effort"],
+    "max_output_tokens": DEFAULT_SCALAR_CONFIG["max_output_tokens"],
+    "time_target": DEFAULT_SCALAR_CONFIG["time_target"],
+    "max_context": DEFAULT_SCALAR_CONFIG["max_context"],
+    "auto_compact_thresh": DEFAULT_SCALAR_CONFIG["auto_compact_thresh"],
+    "compact_target_words": DEFAULT_SCALAR_CONFIG["compact_target_words"],
+    "preserve_last_n_messages": DEFAULT_SCALAR_CONFIG["preserve_last_n_messages"],
+    "tokenizer_encoding": DEFAULT_SCALAR_CONFIG["tokenizer_encoding"],
+    "provider_timeout": DEFAULT_SCALAR_CONFIG["provider_timeout"],
+    "search_provider_retries": DEFAULT_SCALAR_CONFIG["search_provider_retries"],
+    "fetch_provider_retries": DEFAULT_SCALAR_CONFIG["fetch_provider_retries"],
 }
 
 EXTRACTOR_PROMPT_TEMPLATE = """You are a precise information extractor.
@@ -230,9 +176,23 @@ class Config:
         return cls(**normalized)
 
 
+class ConfigCreatedError(RuntimeError):
+    """Raised when NEXI bootstraps a missing config template."""
+
+    def __init__(self, config_path: Path) -> None:
+        self.config_path = config_path
+        super().__init__(CONFIG_CREATED_MESSAGE)
+
+
 def get_config_path() -> Path:
     """Get path to config file."""
     return CONFIG_FILE
+
+
+def format_config_created_message(config_path: Path, display_path: str | None = None) -> str:
+    """Build the user-facing bootstrap message for a missing config."""
+    shown_path = display_path or str(config_path)
+    return f"Config template created at {shown_path}. {CONFIG_CREATED_MESSAGE}"
 
 
 def _build_default_config() -> dict[str, Any]:
@@ -240,77 +200,22 @@ def _build_default_config() -> dict[str, Any]:
     return deepcopy(DEFAULT_CONFIG)
 
 
-def _is_legacy_config(data: dict[str, Any]) -> bool:
-    """Return True when config uses the legacy top-level provider fields."""
-    legacy_fields = {"base_url", "api_key", "model", "jina_key"}
-    return any(field in data for field in legacy_fields)
-
-
-def _migrate_legacy_config(data: dict[str, Any]) -> dict[str, Any]:
-    """Migrate a legacy config dictionary to the canonical provider shape."""
-    migrated = _build_default_config()
-    migrated["providers"]["openai_default"] = {
-        "type": "openai_compatible",
-        "base_url": data.get(
-            "base_url",
-            DEFAULT_CONFIG["providers"]["openai_default"]["base_url"],
-        ),
-        "api_key": data.get("api_key", ""),
-        "model": data.get(
-            "model",
-            DEFAULT_CONFIG["providers"]["openai_default"]["model"],
-        ),
-    }
-    migrated["providers"]["jina"] = {
-        "type": "jina",
-        "api_key": data.get("jina_key", ""),
-    }
-    migrated["default_effort"] = data.get("default_effort", DEFAULT_CONFIG["default_effort"])
-    migrated["max_output_tokens"] = data.get(
-        "max_output_tokens",
-        DEFAULT_CONFIG["max_output_tokens"],
-    )
-    migrated["time_target"] = data.get("time_target", DEFAULT_CONFIG["time_target"])
-    migrated["max_context"] = data.get("max_context", DEFAULT_CONFIG["max_context"])
-    migrated["auto_compact_thresh"] = data.get(
-        "auto_compact_thresh",
-        DEFAULT_CONFIG["auto_compact_thresh"],
-    )
-    migrated["compact_target_words"] = data.get(
-        "compact_target_words",
-        DEFAULT_CONFIG["compact_target_words"],
-    )
-    migrated["preserve_last_n_messages"] = data.get(
-        "preserve_last_n_messages",
-        DEFAULT_CONFIG["preserve_last_n_messages"],
-    )
-    migrated["tokenizer_encoding"] = data.get(
-        "tokenizer_encoding",
-        DEFAULT_CONFIG["tokenizer_encoding"],
-    )
-    migrated["provider_timeout"] = data.get(
-        "provider_timeout",
-        data.get("jina_timeout", DEFAULT_CONFIG["provider_timeout"]),
-    )
-    migrated["search_provider_retries"] = data.get(
-        "search_provider_retries",
-        DEFAULT_CONFIG["search_provider_retries"],
-    )
-    migrated["fetch_provider_retries"] = data.get(
-        "fetch_provider_retries",
-        DEFAULT_CONFIG["fetch_provider_retries"],
-    )
-    return migrated
-
-
 def _normalize_config_data(data: dict[str, Any]) -> dict[str, Any]:
-    """Normalize config data to the canonical shape with defaults."""
-    normalized = _migrate_legacy_config(data) if _is_legacy_config(data) else data.copy()
-    merged = _build_default_config()
-    merged.update({key: value for key, value in normalized.items() if key != "providers"})
-    if "providers" in normalized:
-        merged["providers"] = normalized["providers"]
-    return merged
+    """Normalize config data without injecting inactive provider tables."""
+    normalized = data.copy()
+
+    for field_name, default_value in DEFAULT_CHAIN_CONFIG.items():
+        if field_name not in normalized:
+            normalized[field_name] = deepcopy(default_value)
+
+    for field_name, default_value in DEFAULT_SCALAR_CONFIG.items():
+        if field_name not in normalized:
+            normalized[field_name] = deepcopy(default_value)
+
+    if "providers" not in normalized:
+        normalized["providers"] = {}
+
+    return normalized
 
 
 def _validate_provider_chain(
@@ -322,8 +227,8 @@ def _validate_provider_chain(
     providers = config.get("providers")
     chain = config.get(field_name)
 
-    if not isinstance(chain, list) or not chain:
-        errors.append(f"{field_name} must be a non-empty list")
+    if not isinstance(chain, list):
+        errors.append(f"{field_name} must be a list")
         return
 
     if not all(isinstance(item, str) and item.strip() for item in chain):
@@ -344,6 +249,18 @@ def _validate_provider_chain(
         provider_type = provider_config.get("type")
         if not isinstance(provider_type, str) or not provider_type.strip():
             errors.append(f"providers.{provider_name}.type must be a non-empty string")
+            continue
+
+        if is_custom_provider_type(provider_type):
+            try:
+                provider_path = get_custom_provider_path(provider_type)
+            except ValueError as exc:
+                errors.append(f"providers.{provider_name}.type {exc}")
+                continue
+            if not provider_path.exists():
+                errors.append(
+                    f"providers.{provider_name}.type references missing custom provider file: {provider_path}"
+                )
 
 
 def validate_config(config: dict[str, Any]) -> tuple[bool, list[str]]:
@@ -395,7 +312,7 @@ def validate_config(config: dict[str, Any]) -> tuple[bool, list[str]]:
 
     auto_compact_thresh = config.get("auto_compact_thresh")
     if auto_compact_thresh is not None:
-        if not isinstance(auto_compact_thresh, (int, float)):
+        if not isinstance(auto_compact_thresh, int | float):
             errors.append("auto_compact_thresh must be a number")
         elif not (0.0 <= auto_compact_thresh <= 1.0):
             errors.append("auto_compact_thresh must be between 0.0 and 1.0")
@@ -449,8 +366,14 @@ def load_config() -> Config:
     if not CONFIG_FILE.exists():
         raise FileNotFoundError(f"Config file not found: {CONFIG_FILE}")
 
-    with open(CONFIG_FILE, encoding="utf-8") as file_obj:
-        raw_data = json.load(file_obj)
+    try:
+        with open(CONFIG_FILE, "rb") as file_obj:
+            raw_data = tomllib.load(file_obj)
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(_format_toml_error(exc)) from exc
+
+    if not isinstance(raw_data, dict):
+        raise ValueError("Config must be a TOML table")
 
     data = _normalize_config_data(raw_data)
     is_valid, errors = validate_config(data)
@@ -463,9 +386,18 @@ def load_config() -> Config:
 def save_config(config: Config) -> None:
     """Save configuration to disk."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    CONFIG_FILE.write_text(render_config_toml(config.to_dict()), encoding="utf-8")
 
-    with open(CONFIG_FILE, "w", encoding="utf-8") as file_obj:
-        json.dump(config.to_dict(), file_obj, indent=2, ensure_ascii=False)
+
+def _format_toml_error(error: tomllib.TOMLDecodeError) -> str:
+    """Format TOML parse errors with actionable hints for common mistakes."""
+    message = f"Invalid TOML: {error}"
+    if "Cannot declare" in str(error) and "providers" in str(error):
+        return (
+            f"{message}. Hint: define each [providers.NAME] table only once, even when the same "
+            "provider is used in both search_backends and fetch_backends."
+        )
+    return message
 
 
 def generate_id() -> str:
@@ -473,172 +405,12 @@ def generate_id() -> str:
     return secrets.token_hex(3)
 
 
-def _build_default_runtime_config(
-    base_url: str,
-    api_key: str,
-    model: str,
-    jina_key: str,
-) -> dict[str, Any]:
-    """Create the canonical config payload from first-time setup answers."""
-    config = _build_default_config()
-    config["providers"]["openai_default"] = {
-        "type": "openai_compatible",
-        "base_url": base_url,
-        "api_key": api_key,
-        "model": model,
-    }
-    config["providers"]["jina"] = {
-        "type": "jina",
-        "api_key": jina_key,
-    }
-    return config
-
-
-def run_first_time_setup() -> Config:
-    """Run interactive first-time setup.
-
-    Returns:
-        Config object with user-provided values.
-    """
-    print("Welcome to NEXI! 🔍")
-    print("Let's set up your configuration...\n")
-
-    default_llm = DEFAULT_CONFIG["providers"]["openai_default"]
-
-    base_url = questionary.text(
-        "LLM Base URL:",
-        default=default_llm["base_url"],
-    ).ask()
-    api_key = questionary.password(
-        "API Key:",
-        instruction="Your LLM API key (e.g., OpenRouter)",
-    ).ask()
-    model = questionary.text(
-        "Model:",
-        default=default_llm["model"],
-    ).ask()
-    jina_key = questionary.password(
-        "Jina API Key (optional):",
-        instruction="Press Enter to skip (rate-limited free tier)",
-    ).ask()
-
-    effort_choices = [
-        questionary.Choice("s - Quick (8 iterations)", value="s"),
-        questionary.Choice("m - Balanced (16 iterations) [default]", value="m"),
-        questionary.Choice("l - Thorough (32 iterations)", value="l"),
-    ]
-    default_effort = questionary.select(
-        "Default effort level:",
-        choices=effort_choices,
-        default="m",
-    ).ask()
-
-    max_output_tokens = questionary.text(
-        "Max output tokens:",
-        default=str(DEFAULT_CONFIG["max_output_tokens"]),
-    ).ask()
-
-    print("\n--- Context Management (Optional) ---")
-    print("These settings control automatic conversation compaction to prevent context overflow.")
-    print("Press Enter to use defaults for all context settings.\n")
-
-    max_context = questionary.text(
-        "Max context window (tokens):",
-        default=str(DEFAULT_CONFIG["max_context"]),
-        instruction="Model's context limit (e.g., 128000 for GPT-4)",
-    ).ask()
-    auto_compact_thresh = questionary.text(
-        "Auto-compact threshold (0.0-1.0):",
-        default=str(DEFAULT_CONFIG["auto_compact_thresh"]),
-        instruction="Trigger compaction when context reaches this fraction (e.g., 0.9 = 90%)",
-    ).ask()
-    compact_target_words = questionary.text(
-        "Compact target words:",
-        default=str(DEFAULT_CONFIG["compact_target_words"]),
-        instruction="Target word count for summaries",
-    ).ask()
-    preserve_last_n = questionary.text(
-        "Preserve last N messages:",
-        default=str(DEFAULT_CONFIG["preserve_last_n_messages"]),
-        instruction="Number of recent assistant messages to keep un-compacted",
-    ).ask()
-    tokenizer_encoding = questionary.text(
-        "Tokenizer encoding:",
-        default=DEFAULT_CONFIG["tokenizer_encoding"],
-        instruction="tiktoken encoding name (e.g., cl100k_base for GPT-4)",
-    ).ask()
-    provider_timeout = questionary.text(
-        "Provider timeout (seconds):",
-        default=str(DEFAULT_CONFIG["provider_timeout"]),
-        instruction="Default timeout for provider API calls",
-    ).ask()
-    search_provider_retries = questionary.text(
-        "Search provider retries:",
-        default=str(DEFAULT_CONFIG["search_provider_retries"]),
-        instruction="Retry attempts per search provider before failover",
-    ).ask()
-    fetch_provider_retries = questionary.text(
-        "Fetch provider retries:",
-        default=str(DEFAULT_CONFIG["fetch_provider_retries"]),
-        instruction="Retry attempts per fetch provider before failover",
-    ).ask()
-
-    config_data = _build_default_runtime_config(
-        base_url=base_url or default_llm["base_url"],
-        api_key=api_key or "",
-        model=model or default_llm["model"],
-        jina_key=jina_key or "",
-    )
-    config_data["default_effort"] = default_effort or DEFAULT_CONFIG["default_effort"]
-    config_data["max_output_tokens"] = (
-        int(max_output_tokens) if max_output_tokens else DEFAULT_CONFIG["max_output_tokens"]
-    )
-    config_data["max_context"] = int(max_context) if max_context else DEFAULT_CONFIG["max_context"]
-    config_data["auto_compact_thresh"] = (
-        float(auto_compact_thresh) if auto_compact_thresh else DEFAULT_CONFIG["auto_compact_thresh"]
-    )
-    config_data["compact_target_words"] = (
-        int(compact_target_words)
-        if compact_target_words
-        else DEFAULT_CONFIG["compact_target_words"]
-    )
-    config_data["preserve_last_n_messages"] = (
-        int(preserve_last_n) if preserve_last_n else DEFAULT_CONFIG["preserve_last_n_messages"]
-    )
-    config_data["tokenizer_encoding"] = tokenizer_encoding or DEFAULT_CONFIG["tokenizer_encoding"]
-    config_data["provider_timeout"] = (
-        int(provider_timeout) if provider_timeout else DEFAULT_CONFIG["provider_timeout"]
-    )
-    config_data["search_provider_retries"] = (
-        int(search_provider_retries)
-        if search_provider_retries
-        else DEFAULT_CONFIG["search_provider_retries"]
-    )
-    config_data["fetch_provider_retries"] = (
-        int(fetch_provider_retries)
-        if fetch_provider_retries
-        else DEFAULT_CONFIG["fetch_provider_retries"]
-    )
-
-    config = Config.from_dict(config_data)
-    save_config(config)
-
-    print(f"\n✨ Configuration saved to {CONFIG_FILE}")
-    return config
-
-
 def ensure_config() -> Config:
-    """Ensure configuration exists and is valid.
-
-    If config doesn't exist or is invalid, runs first-time setup.
-
-    Returns:
-        Valid Config object.
-    """
-    try:
-        return load_config()
-    except (FileNotFoundError, ValueError):
-        return run_first_time_setup()
+    """Ensure configuration exists and is valid."""
+    if not CONFIG_FILE.exists():
+        write_default_template(CONFIG_FILE, force=False)
+        raise ConfigCreatedError(CONFIG_FILE)
+    return load_config()
 
 
 def get_system_prompt(max_iter: int, effort: str = "m", prompt_template: str | None = None) -> str:
@@ -694,21 +466,24 @@ def get_compaction_prompt(
 __all__ = [
     "CHUNK_SELECTOR_PROMPT",
     "COMPACTION_PROMPT_TEMPLATE",
+    "CONFIG_CREATED_MESSAGE",
     "CONFIG_DIR",
     "CONFIG_FILE",
     "CONTINUATION_SYSTEM_PROMPT",
     "Config",
+    "ConfigCreatedError",
     "DEFAULT_CONFIG",
     "DEFAULT_SYSTEM_PROMPT_TEMPLATE",
     "EFFORT_LEVELS",
     "EXTRACTOR_PROMPT_TEMPLATE",
     "ensure_config",
+    "format_config_created_message",
     "generate_id",
     "get_compaction_prompt",
     "get_config_path",
     "get_system_prompt",
     "load_config",
-    "run_first_time_setup",
     "save_config",
     "validate_config",
+    "write_default_template",
 ]

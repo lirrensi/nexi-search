@@ -9,7 +9,8 @@ from typing import Any
 import click
 
 from nexi.backends.orchestrators import run_search_chain
-from nexi.config import ensure_config
+from nexi.config import ConfigCreatedError, ensure_config, format_config_created_message
+from nexi.config_doctor import check_command_readiness
 
 
 def _all_searches_failed(payload: dict[str, Any]) -> bool:
@@ -60,7 +61,17 @@ def _format_search_payload(payload: dict[str, Any]) -> str:
 @click.option("-v", "--verbose", is_flag=True, help="Show provider debug output")
 def main(query: str, json_output: bool, verbose: bool) -> None:
     """Run direct search using configured backend orchestration."""
-    config = ensure_config()
+    try:
+        config = ensure_config()
+    except ConfigCreatedError as exc:
+        raise click.ClickException(format_config_created_message(exc.config_path)) from exc
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    readiness_errors = check_command_readiness(config, "nexi-search")
+    if readiness_errors:
+        raise click.ClickException("; ".join(readiness_errors))
+
     payload = asyncio.run(run_search_chain([query], config, verbose))
 
     if json_output:

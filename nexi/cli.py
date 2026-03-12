@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import os
+import shlex
+import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -11,10 +14,14 @@ from typing import Any
 import click
 
 from nexi.config import (
+    CONFIG_FILE,
     CONTINUATION_SYSTEM_PROMPT,
+    ConfigCreatedError,
     ensure_config,
-    get_config_path,
+    format_config_created_message,
+    write_default_template,
 )
+from nexi.config_doctor import build_doctor_report, check_command_readiness
 from nexi.errors import handle_error
 from nexi.history import (
     add_history_entry,
@@ -22,6 +29,7 @@ from nexi.history import (
     format_entry_full,
     format_entry_preview,
     get_entry_by_id,
+    get_history_path,
     get_last_n_entries,
     get_latest_entry,
 )
@@ -43,11 +51,59 @@ from nexi.output import (
 from nexi.search import run_search_sync
 
 
-@click.command(
-    context_settings={"help_option_names": ["-h", "--help"]},
+class QueryCommandGroup(click.Group):
+    """Click group that treats unknown subcommands as search queries."""
+
+    def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+        """Preserve unknown trailing args for default search handling."""
+        if not args and self.no_args_is_help and not ctx.resilient_parsing:
+            raise click.exceptions.NoArgsIsHelpError(ctx)
+
+        rest = click.Command.parse_args(self, ctx, args)
+
+        if self.chain:
+            ctx._protected_args = rest
+            ctx.args = []
+        elif rest:
+            normalized = click.utils.make_str(rest[0])
+            if normalized in self.commands:
+                ctx._protected_args, ctx.args = rest[:1], rest[1:]
+            else:
+                ctx._protected_args = []
+                ctx.args = rest
+
+        return ctx.args
+
+    def resolve_command(
+        self,
+        ctx: click.Context,
+        args: list[str],
+    ) -> tuple[str | None, click.Command | None, list[str]]:
+        """Resolve known subcommands and leave unknown args for query handling."""
+        if args:
+            normalized = click.utils.make_str(args[0])
+            if normalized in self.commands:
+                return super().resolve_command(ctx, args)
+        return None, None, args
+
+
+def _get_cli_version() -> str:
+    """Resolve the installed CLI version."""
+    try:
+        return importlib.metadata.version("nexi-search")
+    except importlib.metadata.PackageNotFoundError:
+        return "0.0.0"
+
+
+@click.group(
+    cls=QueryCommandGroup,
+    context_settings={
+        "help_option_names": ["-h", "--help"],
+        "allow_extra_args": True,
+    },
+    invoke_without_command=True,
     epilog="For shell completion: nexi --install-completion",
 )
-@click.argument("query", required=False)
 @click.option("-q", "--query-text", help="Explicit query string")
 @click.option(
     "-e",
@@ -64,11 +120,10 @@ from nexi.search import run_search_sync
 @click.option("--prev", is_flag=True, help="Show full latest search result")
 @click.option("--show", type=str, metavar="ID", help="Show full result by ID")
 @click.option("--clear-history", is_flag=True, help="Delete all search history")
-@click.option("--config", "show_config", is_flag=True, help="Print config file path")
-@click.option("--edit-config", is_flag=True, help="Open config in $EDITOR")
-@click.version_option(version="0.1.0", prog_name="nexi")
+@click.version_option(version=_get_cli_version(), prog_name="nexi")
+@click.pass_context
 def main(
-    query: str | None,
+    ctx: click.Context,
     query_text: str | None,
     effort: str | None,
     max_len: int | None,
@@ -80,65 +135,40 @@ def main(
     prev: bool,
     show: str | None,
     clear_history: bool,
-    show_config: bool,
-    edit_config: bool,
 ) -> None:
-    """NEXI - Intelligent web search CLI tool.
-
-    Examples:
-        nexi "how to use rust async traits"
-        nexi --effort l --max-len 40000 -q "explain quantum entanglement"
-        nexi -e s "quick python question"
-        nexi --last 5
-        nexi --prev
-    """
-    # Handle plain mode
+    """NEXI - Intelligent web search CLI tool."""
     if plain or not is_tty():
         set_plain_mode(True)
 
-    # Handle config commands
-    if show_config:
-        click.echo(get_config_path())
+    if ctx.invoked_subcommand is not None:
         return
 
-    if edit_config:
-        config_path = get_config_path()
-        editor = os.environ.get("EDITOR", "notepad" if sys.platform == "win32" else "nano")
-        click.echo(f"Opening {config_path} in {editor}...")
-        os.system(f'{editor} "{config_path}"')
-        return
-
-    # Handle history commands
     if clear_history:
         clear_history_func()
         print_success("History cleared")
         return
 
     if last is not None:
-        _show_last_n(last, plain)
+        _show_last_n(last)
         return
 
     if prev:
-        _show_prev(plain)
+        _show_prev()
         return
 
     if show:
-        _show_by_id(show, plain)
+        _show_by_id(show)
         return
 
-    # Get query from argument or option or stdin
-    search_query = query or query_text
-
-    # Check if stdin has data
+    positional_query = " ".join(ctx.args).strip() or None
+    search_query = positional_query or query_text
     if not search_query and not sys.stdin.isatty():
         search_query = sys.stdin.read().strip()
 
     if not search_query:
-        # Enter interactive mode
         _interactive_mode()
         return
 
-    # Run search
     _run_search_command(
         query=search_query,
         effort=effort,
@@ -148,6 +178,69 @@ def main(
         verbose=verbose,
         plain=plain,
     )
+
+
+@main.command("config")
+def config_command() -> None:
+    """Open the current config in the user's editor."""
+    write_default_template(CONFIG_FILE, force=False)
+    editor = os.environ.get("EDITOR", "notepad" if sys.platform == "win32" else "nano")
+    command = [*shlex.split(editor, posix=sys.platform != "win32"), str(CONFIG_FILE)]
+    subprocess.run(command, check=False)
+
+
+@main.command("init")
+def init_command() -> None:
+    """Create the default config template if needed."""
+    created = write_default_template(CONFIG_FILE, force=False)
+    if created:
+        click.echo(f"Created config template at {CONFIG_FILE}")
+        return
+    click.echo(f"Config already exists at {CONFIG_FILE}")
+
+
+@main.command("doctor")
+def doctor_command() -> None:
+    """Check config readiness for public commands."""
+    try:
+        config = ensure_config()
+    except ConfigCreatedError as exc:
+        raise click.ClickException(format_config_created_message(exc.config_path)) from exc
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    report = build_doctor_report(config)
+    failed = False
+    for command_name in ("nexi", "nexi-search", "nexi-fetch"):
+        errors = report[command_name]
+        if errors:
+            failed = True
+            click.echo(f"{command_name}: FAIL - {'; '.join(errors)}")
+            continue
+        click.echo(f"{command_name}: PASS")
+
+    if failed:
+        raise SystemExit(1)
+
+
+@main.command("clean")
+def clean_command() -> None:
+    """Reset local config and history, then recreate the template."""
+    history_path = get_history_path()
+    if CONFIG_FILE.exists():
+        CONFIG_FILE.unlink()
+    if history_path.exists():
+        history_path.unlink()
+    write_default_template(CONFIG_FILE, force=True)
+    click.echo(f"Recreated config template at {CONFIG_FILE}")
+
+
+@main.command("onboard")
+def onboard_command() -> None:
+    """Run the guided onboarding flow."""
+    from nexi.onboard import run_onboarding
+
+    run_onboarding()
 
 
 def _run_search_command(
@@ -160,33 +253,23 @@ def _run_search_command(
     plain: bool,
     initial_messages: list[dict[str, Any]] | None = None,
 ) -> str:
-    """Execute a search command.
-
-    Args:
-        query: Search query
-        effort: Effort level override
-        max_len: Max output tokens override
-        max_iter: Max iterations override
-        time_target: Time target override
-        verbose: Show verbose output
-        plain: Use plain output mode
-        initial_messages: Optional conversation history for multi-turn
-
-    Returns:
-        The answer string from the search result
-    """
-    # Load config
+    """Execute a search command."""
     try:
         config = ensure_config()
-    except Exception as e:
-        handle_error(f"Failed to load config: {e}", verbose=verbose)
+    except ConfigCreatedError as exc:
+        print_error(format_config_created_message(exc.config_path))
+        sys.exit(1)
+    except Exception as exc:
+        handle_error(f"Failed to load config: {exc}", verbose=verbose)
 
-    # Override config with CLI options
+    readiness_errors = check_command_readiness(config, "nexi")
+    if readiness_errors:
+        handle_error("; ".join(readiness_errors), verbose=verbose)
+
     search_effort = effort or config.default_effort
     search_time_target = time_target if time_target is not None else config.time_target
     search_max_tokens = max_len if max_len is not None else config.max_output_tokens
 
-    # Create temporary config with overrides
     search_config = replace(
         config,
         default_effort=search_effort,
@@ -194,18 +277,13 @@ def _run_search_command(
         max_output_tokens=search_max_tokens,
     )
 
-    # Determine if we should use compact mode (non-TTY and not verbose)
     compact = not is_tty() and not verbose
-
-    # Print search start (skip in compact mode)
     if not compact:
         print_search_start(query, plain)
 
-    # Create progress callback
-    progress_callback, tracker = create_progress_callback(verbose, plain, compact)
+    progress_callback, _tracker = create_progress_callback(verbose, plain, compact)
 
     try:
-        # Run search
         result = run_search_sync(
             query=query,
             config=search_config,
@@ -217,14 +295,11 @@ def _run_search_command(
             initial_messages=initial_messages,
         )
 
-        # Print newline after compact progress indicators (to stderr)
         if compact:
-            _safe_print_stderr("")  # End the [1][2][3] line
+            _safe_print_stderr("")
 
-        # Print answer with citations
         print_answer(result.answer, plain, result.url_citations, result.url_to_title)
 
-        # Print summary in verbose mode
         if verbose:
             print_result_summary(
                 iterations=result.iterations,
@@ -234,7 +309,6 @@ def _run_search_command(
                 plain=plain,
             )
 
-        # Save to history
         entry = create_entry(
             query=query,
             answer=result.answer,
@@ -249,14 +323,14 @@ def _run_search_command(
         return result.answer
 
     except KeyboardInterrupt:
-        print_warning("\\nSearch cancelled")
+        print_warning("\nSearch cancelled")
         sys.exit(130)
-    except Exception as e:
-        handle_error(f"Search failed: {e}", verbose=verbose)
+    except Exception as exc:
+        handle_error(f"Search failed: {exc}", verbose=verbose)
         return ""
 
 
-def _show_last_n(n: int, plain: bool) -> None:
+def _show_last_n(n: int) -> None:
     """Show last N history entries."""
     entries = get_last_n_entries(n)
 
@@ -264,32 +338,28 @@ def _show_last_n(n: int, plain: bool) -> None:
         print_warning("No searches yet! Try: nexi 'your query here'")
         return
 
-    for i, entry in enumerate(entries, 1):
-        click.echo(format_entry_preview(entry, i))
+    for index, entry in enumerate(entries, 1):
+        click.echo(format_entry_preview(entry, index))
         click.echo()
 
     click.echo("[Use 'nexi --show <ID>' to see full result]")
 
 
-def _show_prev(plain: bool) -> None:
+def _show_prev() -> None:
     """Show previous (latest) search result."""
     entry = get_latest_entry()
-
     if not entry:
         print_warning("No searches yet! Try: nexi 'your query here'")
         return
-
     click.echo(format_entry_full(entry))
 
 
-def _show_by_id(entry_id: str, plain: bool) -> None:
+def _show_by_id(entry_id: str) -> None:
     """Show search result by ID."""
     entry = get_entry_by_id(entry_id)
-
     if not entry:
         print_error(f"No search found with ID: {entry_id}")
         sys.exit(1)
-
     click.echo(format_entry_full(entry))
 
 
@@ -297,27 +367,31 @@ def _interactive_mode() -> None:
     """Run interactive mode (REPL) with multi-turn support."""
     import questionary
 
-    # Load config (ensures config exists and is valid)
     try:
-        ensure_config()
-    except Exception as e:
-        print_error(f"Failed to load config: {e}")
+        config = ensure_config()
+    except ConfigCreatedError as exc:
+        print_error(format_config_created_message(exc.config_path))
+        sys.exit(1)
+    except Exception as exc:
+        print_error(f"Failed to load config: {exc}")
         sys.exit(1)
 
-    # Display ASCII art
+    readiness_errors = check_command_readiness(config, "nexi")
+    if readiness_errors:
+        print_error("; ".join(readiness_errors))
+        sys.exit(1)
+
     art_path = Path(__file__).parent.parent / "img" / "art.txt"
     if art_path.exists():
         try:
-            with open(art_path, encoding="utf-8") as f:
-                art = f.read()
-            click.echo(art)
+            with open(art_path, encoding="utf-8") as file_obj:
+                click.echo(file_obj.read())
         except Exception:
             pass
 
     print_success("Welcome to NEXI interactive mode!")
     print("Type 'exit' or press Ctrl+C to quit\n")
 
-    # Track conversation for multi-turn
     conversation_history: list[dict[str, Any]] = []
     is_first_turn = True
 
@@ -333,41 +407,34 @@ def _interactive_mode() -> None:
                 click.echo("Commands: exit, quit, q, help, h")
                 continue
 
-            # Build initial_messages for this turn
             if is_first_turn:
                 initial_messages = None
             else:
-                # Use continuation prompt and include history
                 initial_messages = [
                     {"role": "system", "content": CONTINUATION_SYSTEM_PROMPT},
-                ] + conversation_history.copy()
+                    *conversation_history.copy(),
+                ]
 
-            # Run search and capture answer
             answer = _run_search_command(
                 query=query,
                 effort=None,
                 max_len=None,
                 max_iter=None,
                 time_target=None,
-                verbose=True,  # Enable verbose mode in interactive mode for better progress info
+                verbose=True,
                 plain=False,
                 initial_messages=initial_messages,
             )
 
-            # Update conversation history for next turn
-            # Add the user query
             conversation_history.append({"role": "user", "content": query})
-            # Add the assistant response
             conversation_history.append({"role": "assistant", "content": answer})
-
-            # Mark that we're in continuation mode
             is_first_turn = False
 
         except KeyboardInterrupt:
             print_success("\nBye bye~ 💕")
             break
-        except Exception as e:
-            print_error(f"Error: {e}")
+        except Exception as exc:
+            print_error(f"Error: {exc}")
 
 
 if __name__ == "__main__":

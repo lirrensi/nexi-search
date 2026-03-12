@@ -254,9 +254,9 @@ def test_load_config(tmp_path):
 ## Project-Specific Notes
 
 - **Entry Points**: `main.py` and `nexi/__main__.py` are entry points with Windows UTF-8 fixes
-- **Configuration**: Stored in `~/.local/share/nexi/config.json`
-- **History**: Stored as JSONL in `~/.local/share/nexi/history.jsonl`
-- **Prompts**: Stored in `~/.local/share/nexi/prompts/` directory
+- **Configuration**: Stored in `~/.config/nexi/config.toml`
+- **History**: Stored as JSONL in `~/.config/nexi/history.jsonl`
+- **Prompts**: Stored in `~/.config/nexi/prompts/` directory
 - **Async Operations**: All HTTP operations use `httpx.AsyncClient`
 - **LLM Integration**: Uses OpenAI-compatible API via `AsyncOpenAI` client
 - **Search Tools**: `web_search` and `web_get` use Jina AI APIs
