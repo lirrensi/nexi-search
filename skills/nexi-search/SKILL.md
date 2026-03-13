@@ -29,13 +29,13 @@ nexi-fetch --json "https://example.com"
 
 ## Effort Levels
 
-Control agent search depth with `-e`:
+Control agent search depth with `-e`; NEXI keeps the exact iteration and token budgets internal:
 
-| Level | Iterations | Use When |
-|-------|------------|----------|
-| `-e s` | 8 | Quick facts, simple lookups |
-| `-e m` | 16 | Default, most queries |
-| `-e l` | 32 | Deep research, complex topics |
+| Level | Use When |
+|-------|----------|
+| `-e s` | Quick facts, simple lookups |
+| `-e m` | Default, most queries |
+| `-e l` | Deep research, complex topics |
 
 Example:
 ```bash
@@ -58,10 +58,12 @@ Parse the sources section to extract URLs for further processing if needed.
 
 | Flag | Purpose |
 |------|---------|
-| `--max-len N` | Limit output tokens (default 8192) |
-| `--max-iter N` | Override max iterations |
-| `--time-target N` | Force answer after N seconds |
-| `-v` | Verbose: show tool calls (debugging) |
+| `--plain` | Plain output for scripts and agents |
+| `-v` | Verbose: show tool calls and debug output |
+| `--query-text TEXT` | Pass the query explicitly instead of positionally |
+| `--last N` | Show the last N saved search previews |
+| `--prev` | Show the latest saved full result |
+| `--show ID` | Show one saved result by ID |
 | `--json` | Structured output for `nexi-search` and `nexi-fetch` |
 
 ## Config Lifecycle

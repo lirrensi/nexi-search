@@ -3,7 +3,7 @@
 ## Install
 
 ```bash
-uv tool install git+https://github.com/lirrensi/nexi-search.git
+uv tool install --upgrade git+https://github.com/lirrensi/nexi-search.git
 ```
 
 Verify:
@@ -37,8 +37,6 @@ search_backends = []
 fetch_backends = ["crawl4ai_local", "markdown_new"]
 
 default_effort = "m"
-max_output_tokens = 8192
-time_target = 600
 
 [providers.markdown_new]
 type = "markdown_new"
@@ -85,6 +83,8 @@ nexi --plain "hello world"
 nexi-search --json "hello world"
 nexi-fetch --json "https://example.com"
 ```
+
+The public search-depth control is `-e s|m|l`; output-token and iteration budgets are internal now.
 
 ## Common Issues
 
