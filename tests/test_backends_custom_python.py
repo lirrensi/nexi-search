@@ -23,7 +23,6 @@ def _build_custom_config() -> Config:
             "custom_fetch": {"type": "provider-custom_api", "token": "ok"},
         },
         default_effort="m",
-        max_output_tokens=1024,
         provider_timeout=5,
         search_provider_retries=1,
         fetch_provider_retries=1,

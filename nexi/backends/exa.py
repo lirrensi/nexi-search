@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from nexi.backends.jina import get_http_client
+from nexi.backends.http_client import get_http_client
 
 BASE_URL = "https://api.exa.ai"
 
@@ -97,7 +97,9 @@ class ExaFetchProvider:
             content = item.get("text") or item.get("summary") or ""
             if isinstance(item.get("highlights"), list) and not content:
                 content = "\n\n".join(
-                    value for value in item["highlights"] if isinstance(value, str) and value.strip()
+                    value
+                    for value in item["highlights"]
+                    if isinstance(value, str) and value.strip()
                 )
             if not isinstance(content, str) or not content.strip():
                 pages.append({"url": url, "content": "", "error": "No content returned"})
@@ -119,7 +121,13 @@ async def _search_single(
         "type": config.get("search_type", "auto"),
         "contents": {"text": config.get("text", False)},
     }
-    for key in ("category", "includeDomains", "excludeDomains", "startPublishedDate", "endPublishedDate"):
+    for key in (
+        "category",
+        "includeDomains",
+        "excludeDomains",
+        "startPublishedDate",
+        "endPublishedDate",
+    ):
         if key in config:
             payload[key] = config[key]
 
@@ -135,7 +143,11 @@ async def _search_single(
         response.raise_for_status()
         data = response.json()
     except httpx.HTTPStatusError as exc:
-        return {"query": query, "results": [], "error": f"HTTP {exc.response.status_code}: {exc.response.text}"}
+        return {
+            "query": query,
+            "results": [],
+            "error": f"HTTP {exc.response.status_code}: {exc.response.text}",
+        }
     except Exception as exc:
         return {"query": query, "results": [], "error": str(exc)}
 

@@ -44,7 +44,6 @@ def _build_ready_config() -> Config:
             },
         },
         default_effort="m",
-        max_output_tokens=4096,
         provider_timeout=30,
         search_provider_retries=2,
         fetch_provider_retries=2,
@@ -156,7 +155,6 @@ def test_default_search_uses_search_path_when_dependencies_are_mocked() -> None:
                 iterations=2,
                 duration_s=1.5,
                 tokens=123,
-                reached_max_iter=False,
             ),
         ) as mock_run_search,
         patch("nexi.cli.add_history_entry") as mock_add_history,
@@ -167,3 +165,18 @@ def test_default_search_uses_search_path_when_dependencies_are_mocked() -> None:
     assert "Mock answer" in result.output
     mock_run_search.assert_called_once()
     mock_add_history.assert_called_once()
+
+
+def test_help_hides_removed_search_limit_flags() -> None:
+    """The public CLI help exposes effort only for search depth."""
+    runner = CliRunner()
+
+    result = runner.invoke(main, ["--help"])
+
+    assert result.exit_code == 0
+    assert "--effort" in result.output
+    assert "--verbose" in result.output
+    assert "--plain" in result.output
+    assert "--max-len" not in result.output
+    assert "--max-iter" not in result.output
+    assert "--time-target" not in result.output

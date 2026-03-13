@@ -98,9 +98,9 @@ NEXI is an intelligent research CLI that uses an agentic search loop powered by 
 │  │  2. Parse tool_calls                                     │  │
 │  │  3. Execute tools (web_search, web_get, final_answer)    │  │
 │  │  4. Add results to conversation                          │  │
-│  │  5. Check limits (time_target, max_iter, context)        │  │
+│  │  5. Check internal guard rails (effort, context)         │  │
 │  │  6. Compact if needed                                    │  │
-│  │  7. Repeat until final_answer or limit reached           │  │
+│  │  7. Repeat until final_answer or graceful finalization   │  │
 │  └──────────────────────────────────────────────────────────┘  │
 └────────────────────┬────────────────────────────────────────────┘
                      │
@@ -154,7 +154,7 @@ NEXI is an intelligent research CLI that uses an agentic search loop powered by 
 - Direct search/fetch entrypoints: Parse args, invoke orchestration layer, print plain text or JSON
 
 **Features**:
-- Argument parsing (query, effort, max_iter, time_target, verbose, plain)
+- Argument parsing (query, effort, verbose, plain)
 - stdin support for piping queries
 - Interactive REPL mode with conversation history
 - History management commands
@@ -193,8 +193,6 @@ class Config:
     fetch_backends: list[str]            # Ordered fetch provider chain
     providers: dict[str, dict[str, Any]] # Provider config objects by instance name
     default_effort: str                  # s/m/l
-    max_output_tokens: int               # Max tokens in final answer
-    time_target: int | None              # Soft time limit (seconds)
     max_context: int                     # Model's context window limit
     auto_compact_thresh: float           # Trigger compaction at this fraction
     compact_target_words: int            # Target word count for summaries
@@ -275,7 +273,6 @@ class SearchResult:
     iterations: int
     duration_s: float
     tokens: int
-    reached_max_iter: bool
 ```
 
 **Search Loop Algorithm**:
@@ -283,23 +280,21 @@ class SearchResult:
 ```
 1. Initialize:
     - Clear URL cache
-    - Set max_iter from effort level
-    - Set time_target from config or CLI override
+    - Derive an internal iteration budget from effort level
     - Create conversation with system prompt + user query
     - Initialize LLM provider orchestrator from llm_backends
     - Initialize citation tracking (url_to_number, url_to_title)
 
-2. For each iteration (1 to max_iter):
-    a. Check time_target → break if exceeded
-    b. Call LLM with tools and current conversation through the LLM provider chain
-    c. Track token usage
-    d. Parse response.message.tool_calls
+2. For each iteration within the internal effort budget:
+    a. Call LLM with tools and current conversation through the LLM provider chain
+    b. Track token usage
+    c. Parse response.message.tool_calls
 
-    e. If tool_call is "final_answer":
+    d. If tool_call is "final_answer":
        - Extract answer
        - Break loop
 
-    f. If tool_call is "web_search":
+    e. If tool_call is "web_search":
        - Execute provider-orchestrated searches over pending queries
        - Retry failed queries inside the active provider
        - Fail over only remaining failed queries to the next provider
@@ -307,7 +302,7 @@ class SearchResult:
        - Add assistant message (tool_calls) to conversation
        - Add tool message (results) to conversation
 
-    g. If tool_call is "web_get":
+    f. If tool_call is "web_get":
        - Assign stable citation numbers to URLs
        - Execute provider-orchestrated fetches over pending URLs
        - Retry failed URLs inside the active provider
@@ -315,23 +310,25 @@ class SearchResult:
        - Process content (full, chunks, or extraction)
        - Estimate tokens for result
        - Check if compaction needed:
-          - If current + estimated > threshold:
-            - Compact conversation
-           - If still over limit → force answer and break
-      - Track URLs fetched
-      - Add assistant message (tool_calls) to conversation
-      - Add tool message (results with sources list) to conversation
+           - If current + estimated > threshold:
+             - Compact conversation
+             - If still over limit:
+               - Stop expanding search
+               - Return the best final answer available from gathered information
+       - Track URLs fetched
+       - Add assistant message (tool_calls) to conversation
+       - Add tool message (results with sources list) to conversation
 
-   h. If no tool_call:
-      - Force answer from message.content
-      - Break loop
+    g. If no tool_call:
+       - Force answer from message.content
+       - Break loop
 
-3. If max_iter reached:
+3. If the internal effort budget is exhausted:
    - Request final answer via _request_final_answer()
 
 4. Return SearchResult with:
     - answer, urls, url_citations, url_to_title
-    - iterations, duration_s, tokens, reached_max_iter
+    - iterations, duration_s, tokens
 ```
 
 **LLM Provider Failover Rules**:
@@ -372,7 +369,7 @@ Three tools are exposed to the LLM via function calling:
 **Helper Functions**:
 - `_get_tool_schemas()`: Return tool definitions for OpenAI API
 - `_force_answer()`: Generate answer when limits reached
-- `_request_final_answer()`: Request final answer from LLM when max_iter reached
+- `_request_final_answer()`: Request final answer from LLM when the effort budget is exhausted
 - `run_search_sync()`: Synchronous wrapper using new event loop
 
 **Retry Logic**:
@@ -784,8 +781,6 @@ class HistoryEntry:
 - `nexi_agent`
   - `query` (required): Search query
   - `effort` (optional): "s", "m", or "l" (default: "m")
-  - `max_iter` (optional): Override max iterations
-  - `time_target` (optional): Force return after N seconds
   - `verbose` (optional): Show detailed progress
 - `nexi_search`
   - `query` (required): Search query
@@ -838,7 +833,7 @@ Load Config
 Initialize Search Loop
     │
     ├─► Clear URL Cache
-    ├─► Set max_iter, time_target
+    ├─► Derive internal effort budget
     ├─► Create conversation (system + user)
     └─► Initialize LLM provider orchestrator
     │
@@ -846,10 +841,9 @@ Initialize Search Loop
 ┌─────────────────────────────────────┐
 │         Iteration Loop              │
 │                                     │
-│  1. Check time_target               │
-│  2. Call LLM with provider fallback │
-│  3. Parse tool_calls                │
-│  4. Execute tool                    │
+│  1. Call LLM with provider fallback │
+│  2. Parse tool_calls                │
+│  3. Execute tool                    │
 │     ├─► web_search                  │
 │     │   └─► Search provider chain   │
 │     ├─► web_get                     │
@@ -859,10 +853,10 @@ Initialize Search Loop
 │     │   └─► Update cache            │
 │     └─► final_answer                │
 │         └─► Break loop              │
-│  5. Add results to conversation     │
-│  6. Check context limit             │
+│  4. Add results to conversation     │
+│  5. Check context limit             │
 │     └─► Compact if needed           │
-│  7. Repeat until done               │
+│  6. Repeat until done               │
 └─────────────────────────────────────┘
     │
     ▼
@@ -949,11 +943,9 @@ All saved configurations must include:
 - `fetch_backends`: Ordered list of provider names for fetch execution
 - `providers`: Mapping of provider name to provider config object
 - `default_effort`: One of "s", "m", "l"
-- `max_output_tokens`: Positive integer
 
 ### Optional Fields
 
-- `time_target`: Positive integer or null (no limit)
 - `max_context`: Positive integer (default: 128000)
 - `auto_compact_thresh`: Float between 0.0 and 1.0 (default: 0.9)
 - `compact_target_words`: Positive integer (default: 5000)
@@ -971,19 +963,17 @@ All saved configurations must include:
 4. **provider type**: Every provider config object MUST include a supported `type`
 5. **provider config**: Each provider class MUST validate its own required fields before execution
 6. **default_effort**: Must be in `["s", "m", "l"]`
-7. **max_output_tokens**: Must be positive integer
-8. **time_target**: Must be positive integer or null
-9. **max_context**: Must be positive integer
-10. **auto_compact_thresh**: Must be between 0.0 and 1.0
-11. **compact_target_words**: Must be positive integer
-12. **preserve_last_n_messages**: Must be non-negative integer
-13. **tokenizer_encoding**: Must be non-empty string
-14. **provider_timeout**: Must be positive integer
-15. **search_provider_retries / fetch_provider_retries**: Must be positive integers
-16. **usable `nexi` config**: MUST include at least one usable LLM provider and one usable search provider
-17. **usable `nexi-search` config**: MUST include at least one usable search provider
-18. **usable `nexi-fetch` config**: MUST include at least one usable fetch provider
-19. **template state**: Empty `llm_backends` or `search_backends` MAY exist in the generated template, but MUST fail readiness checks until activated
+7. **max_context**: Must be positive integer
+8. **auto_compact_thresh**: Must be between 0.0 and 1.0
+9. **compact_target_words**: Must be positive integer
+10. **preserve_last_n_messages**: Must be non-negative integer
+11. **tokenizer_encoding**: Must be non-empty string
+12. **provider_timeout**: Must be positive integer
+13. **search_provider_retries / fetch_provider_retries**: Must be positive integers
+14. **usable `nexi` config**: MUST include at least one usable LLM provider and one usable search provider
+15. **usable `nexi-search` config**: MUST include at least one usable search provider
+16. **usable `nexi-fetch` config**: MUST include at least one usable fetch provider
+17. **template state**: Empty `llm_backends` or `search_backends` MAY exist in the generated template, but MUST fail readiness checks until activated
 
 ---
 
@@ -994,11 +984,10 @@ All saved configurations must include:
 The search loop terminates when **any** of these conditions are met:
 
 1. **final_answer tool called**: LLM provides final answer
-2. **Time target exceeded**: `elapsed >= time_target`
-3. **Max iterations reached**: `current_iteration >= max_iter`
-4. **Context limit exceeded**: After failed compaction
-5. **Provider chain exhaustion**: All configured LLM providers fail for the current request
-6. **User cancellation**: KeyboardInterrupt
+2. **Effort budget exhausted**: NEXI requests and returns the best final answer available
+3. **Context guard rail finalization**: If compaction still cannot recover enough room, NEXI stops expanding and returns the best final answer available
+4. **Provider chain exhaustion**: All configured LLM providers fail for the current request
+5. **User cancellation**: KeyboardInterrupt
 
 ### Tool Call Rules
 
@@ -1144,8 +1133,9 @@ The search loop terminates when **any** of these conditions are met:
 2. **Encoding Cache**: tiktoken encodings cached at module level
    - Key: encoding name, Value: Encoding object
 
-3. **HTTP Client**: Shared client with connection pooling
-   - max_connections=10, max_keepalive_connections=5
+3. **HTTP Transport Reuse**: Connection reuse SHOULD preserve pooling benefits without freezing timeout behavior from first use
+   - Timeout changes in long-lived processes MUST apply to subsequent provider calls
+   - Transport reuse MUST NOT create hidden cross-provider coupling for incompatible timeout settings
 
 ### Token Optimization
 
@@ -1298,16 +1288,12 @@ api_key = "key456"
    - Wait or switch to different model
    - Increase timeout between searches
 
-3. **Time Target Hit**
-   - Increase `time_target` in config
-   - Use `--time-target` CLI flag
-
-4. **Context Limit Exceeded**
+3. **Search Finalized Early Under Context Guard Rails**
    - Increase `max_context` in config
    - Lower `auto_compact_thresh` to compact earlier
    - Reduce `compact_target_words` for smaller summaries
 
-5. **UTF-8 Garbled (Windows)**
+4. **UTF-8 Garbled (Windows)**
    - Use `--plain` flag
    - Use Windows Terminal instead of cmd.exe
 

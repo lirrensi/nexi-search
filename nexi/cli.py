@@ -111,9 +111,6 @@ def _get_cli_version() -> str:
     type=click.Choice(["s", "m", "l"]),
     help="Search depth: s|m|l",
 )
-@click.option("--max-len", type=int, help="Max output tokens")
-@click.option("--max-iter", type=int, help="Max search iterations")
-@click.option("--time-target", type=int, help="Soft limit: force final answer after N seconds")
 @click.option("-v", "--verbose", is_flag=True, help="Show tool calls and debug info")
 @click.option("--plain", is_flag=True, help="Disable emoji/colors for scripting")
 @click.option("--last", type=int, metavar="N", help="Show last N searches")
@@ -126,9 +123,6 @@ def main(
     ctx: click.Context,
     query_text: str | None,
     effort: str | None,
-    max_len: int | None,
-    max_iter: int | None,
-    time_target: int | None,
     verbose: bool,
     plain: bool,
     last: int | None,
@@ -172,9 +166,6 @@ def main(
     _run_search_command(
         query=search_query,
         effort=effort,
-        max_len=max_len,
-        max_iter=max_iter,
-        time_target=time_target,
         verbose=verbose,
         plain=plain,
     )
@@ -246,9 +237,6 @@ def onboard_command() -> None:
 def _run_search_command(
     query: str,
     effort: str | None,
-    max_len: int | None,
-    max_iter: int | None,
-    time_target: int | None,
     verbose: bool,
     plain: bool,
     initial_messages: list[dict[str, Any]] | None = None,
@@ -267,15 +255,7 @@ def _run_search_command(
         handle_error("; ".join(readiness_errors), verbose=verbose)
 
     search_effort = effort or config.default_effort
-    search_time_target = time_target if time_target is not None else config.time_target
-    search_max_tokens = max_len if max_len is not None else config.max_output_tokens
-
-    search_config = replace(
-        config,
-        default_effort=search_effort,
-        time_target=search_time_target,
-        max_output_tokens=search_max_tokens,
-    )
+    search_config = config if effort is None else replace(config, default_effort=search_effort)
 
     compact = not is_tty() and not verbose
     if not compact:
@@ -288,8 +268,6 @@ def _run_search_command(
             query=query,
             config=search_config,
             effort=search_effort,
-            max_iter=max_iter,
-            time_target=time_target,
             verbose=verbose,
             progress_callback=progress_callback,  # type: ignore[arg-type]
             initial_messages=initial_messages,
@@ -418,9 +396,6 @@ def _interactive_mode() -> None:
             answer = _run_search_command(
                 query=query,
                 effort=None,
-                max_len=None,
-                max_iter=None,
-                time_target=None,
                 verbose=True,
                 plain=False,
                 initial_messages=initial_messages,

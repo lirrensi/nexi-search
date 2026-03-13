@@ -14,8 +14,6 @@ DEFAULT_CHAIN_CONFIG: dict[str, list[str]] = {
 
 DEFAULT_SCALAR_CONFIG: dict[str, Any] = {
     "default_effort": "m",
-    "max_output_tokens": 8192,
-    "time_target": None,
     "max_context": 128000,
     "auto_compact_thresh": 0.9,
     "compact_target_words": 5000,
@@ -24,10 +22,6 @@ DEFAULT_SCALAR_CONFIG: dict[str, Any] = {
     "provider_timeout": 30,
     "search_provider_retries": 2,
     "fetch_provider_retries": 2,
-}
-
-NULL_SCALAR_EXAMPLES: dict[str, Any] = {
-    "time_target": 600,
 }
 
 ACTIVE_FETCH_PROVIDER_DEFAULTS: dict[str, dict[str, Any]] = {
@@ -162,8 +156,6 @@ def render_config_toml(active_config: dict[str, Any] | None = None) -> str:
 
     scalar_order = [
         "default_effort",
-        "max_output_tokens",
-        "time_target",
         "max_context",
         "auto_compact_thresh",
         "compact_target_words",
@@ -266,10 +258,7 @@ def _build_render_config(active_config: dict[str, Any] | None) -> dict[str, Any]
 def _render_scalar_line(key: str, value: Any) -> list[str]:
     """Render a scalar config line, commenting nullable defaults when needed."""
     if value is None:
-        example_value = NULL_SCALAR_EXAMPLES.get(key)
-        if example_value is None:
-            return []
-        return [f"# {_format_assignment(key, example_value)}"]
+        return []
     return [_format_assignment(key, value)]
 
 

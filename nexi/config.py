@@ -32,6 +32,7 @@ EFFORT_LEVELS = {
     "m": {"max_iter": 16, "description": "Balanced"},
     "l": {"max_iter": 32, "description": "Thorough research"},
 }
+INTERNAL_LLM_MAX_TOKENS = 8192
 
 DEFAULT_CONFIG = {
     "llm_backends": deepcopy(DEFAULT_CHAIN_CONFIG["llm_backends"]),
@@ -39,8 +40,6 @@ DEFAULT_CONFIG = {
     "fetch_backends": deepcopy(DEFAULT_CHAIN_CONFIG["fetch_backends"]),
     "providers": deepcopy(ACTIVE_FETCH_PROVIDER_DEFAULTS),
     "default_effort": DEFAULT_SCALAR_CONFIG["default_effort"],
-    "max_output_tokens": DEFAULT_SCALAR_CONFIG["max_output_tokens"],
-    "time_target": DEFAULT_SCALAR_CONFIG["time_target"],
     "max_context": DEFAULT_SCALAR_CONFIG["max_context"],
     "auto_compact_thresh": DEFAULT_SCALAR_CONFIG["auto_compact_thresh"],
     "compact_target_words": DEFAULT_SCALAR_CONFIG["compact_target_words"],
@@ -80,7 +79,6 @@ DEFAULT_SYSTEM_PROMPT_TEMPLATE = """You are a helpful research assistant. Your g
 
 Current date: {current_date}
 Effort level: {effort_description}
-Maximum iterations available: {max_iter}
 
 You have access to these tools:
 - web_search: Search the web for information (supports multiple parallel queries)
@@ -95,9 +93,7 @@ Guidelines:
 5. When providing the final answer, use [1], [2], etc. to cite sources
 6. Synthesize information from multiple sources
 7. Call final_answer when you have a complete answer
-8. You have up to {max_iter} iterations - use them wisely
-9. If you reach max iterations, provide your best answer with available information
-10. Do not end final_answer with followup questions
+8. Do not end final_answer with followup questions
 
 Always respond with a tool call.
 """
@@ -154,8 +150,6 @@ class Config:
     fetch_backends: list[str]
     providers: dict[str, dict[str, Any]] = field(default_factory=dict)
     default_effort: str = "m"
-    max_output_tokens: int = 8192
-    time_target: int | None = None
     max_context: int = 128000
     auto_compact_thresh: float = 0.9
     compact_target_words: int = 5000
@@ -280,7 +274,6 @@ def validate_config(config: dict[str, Any]) -> tuple[bool, list[str]]:
         "fetch_backends",
         "providers",
         "default_effort",
-        "max_output_tokens",
     ]
     for field_name in required:
         if field_name not in config:
@@ -297,14 +290,6 @@ def validate_config(config: dict[str, Any]) -> tuple[bool, list[str]]:
     effort = config.get("default_effort", "")
     if effort not in EFFORT_LEVELS:
         errors.append(f"default_effort must be one of: {', '.join(EFFORT_LEVELS.keys())}")
-
-    tokens = config.get("max_output_tokens", 0)
-    if not isinstance(tokens, int) or tokens <= 0:
-        errors.append("max_output_tokens must be a positive integer")
-
-    time_target = config.get("time_target")
-    if time_target is not None and (not isinstance(time_target, int) or time_target <= 0):
-        errors.append("time_target must be a positive integer or null")
 
     max_context = config.get("max_context")
     if max_context is not None and (not isinstance(max_context, int) or max_context <= 0):
@@ -413,16 +398,15 @@ def ensure_config() -> Config:
     return load_config()
 
 
-def get_system_prompt(max_iter: int, effort: str = "m", prompt_template: str | None = None) -> str:
+def get_system_prompt(effort: str, prompt_template: str | None = None) -> str:
     """Get formatted system prompt.
 
     Args:
-        max_iter: Maximum number of iterations allowed.
         effort: Effort level (s/m/l) - affects how thorough the search should be.
         prompt_template: Optional custom prompt template. Uses default if None.
 
     Returns:
-        Formatted system prompt with current date, effort level, and max_iter substituted.
+        Formatted system prompt with current date and effort level substituted.
     """
     template = prompt_template or DEFAULT_SYSTEM_PROMPT_TEMPLATE
     current_date = datetime.now().strftime("%Y-%m-%d")
@@ -436,7 +420,6 @@ def get_system_prompt(max_iter: int, effort: str = "m", prompt_template: str | N
 
     return template.format(
         current_date=current_date,
-        max_iter=max_iter,
         effort_description=effort_description,
     )
 
@@ -476,6 +459,7 @@ __all__ = [
     "DEFAULT_SYSTEM_PROMPT_TEMPLATE",
     "EFFORT_LEVELS",
     "EXTRACTOR_PROMPT_TEMPLATE",
+    "INTERNAL_LLM_MAX_TOKENS",
     "ensure_config",
     "format_config_created_message",
     "generate_id",

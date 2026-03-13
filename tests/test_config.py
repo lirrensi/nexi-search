@@ -47,8 +47,6 @@ def _build_config() -> Config:
             },
         },
         default_effort="m",
-        max_output_tokens=8192,
-        time_target=None,
         max_context=128000,
         auto_compact_thresh=0.9,
         compact_target_words=5000,
@@ -131,7 +129,6 @@ search_backends = ["jina"]
 fetch_backends = ["crawl4ai_local", "markdown_new"]
 
 default_effort = "m"
-max_output_tokens = 8192
 max_context = 128000
 auto_compact_thresh = 0.9
 compact_target_words = 5000
@@ -169,7 +166,7 @@ retain_images = false
     assert loaded.search_backends == ["jina"]
     assert loaded.fetch_backends == ["crawl4ai_local", "markdown_new"]
     assert loaded.providers["openrouter"]["type"] == "openai_compatible"
-    assert loaded.time_target is None
+    assert loaded.provider_timeout == 30
 
 
 def test_load_config_adds_hint_for_duplicate_provider_tables(tmp_path: Path, monkeypatch) -> None:
@@ -181,7 +178,6 @@ search_backends = ["jina"]
 fetch_backends = ["jina"]
 llm_backends = []
 default_effort = "m"
-max_output_tokens = 8192
 
 [providers.jina]
 type = "jina"

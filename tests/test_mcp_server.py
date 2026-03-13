@@ -41,8 +41,6 @@ def _build_config() -> Config:
             },
         },
         default_effort="m",
-        max_output_tokens=4000,
-        time_target=600,
     )
 
 
@@ -72,14 +70,11 @@ async def test_nexi_agent_basic(mock_run_search, mock_ensure_config, _mock_readi
         iterations=3,
         duration_s=5.5,
         tokens=1000,
-        reached_max_iter=False,
     )
 
     result = await nexi_agent(
         query="test query",
         effort="m",
-        max_iter=5,
-        time_target=120,
         verbose=False,
     )
 
@@ -92,10 +87,7 @@ async def test_nexi_agent_basic(mock_run_search, mock_ensure_config, _mock_readi
     call_kwargs = mock_run_search.call_args.kwargs
     assert call_kwargs["query"] == "test query"
     assert call_kwargs["effort"] == "m"
-    assert call_kwargs["max_iter"] == 5
-    assert call_kwargs["time_target"] == 120
     assert call_kwargs["config"].default_effort == "m"
-    assert call_kwargs["config"].time_target == 120
 
 
 @patch("nexi.mcp_server.ensure_config")

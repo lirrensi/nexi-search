@@ -41,7 +41,6 @@ def _build_config(**overrides: Any) -> Config:
             "secondary_fetch": {"type": "secondary_fetch"},
         },
         default_effort="m",
-        max_output_tokens=1024,
         provider_timeout=5,
         search_provider_retries=1,
         fetch_provider_retries=1,

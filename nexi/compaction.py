@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from nexi.backends.orchestrators import run_llm_chain
-from nexi.config import Config, get_compaction_prompt
+from nexi.config import INTERNAL_LLM_MAX_TOKENS, Config, get_compaction_prompt
 from nexi.token_counter import count_messages_tokens
 
 __all__ = [
@@ -135,7 +135,7 @@ async def generate_summary(
             tools=[],
             config=config,
             verbose=verbose,
-            max_tokens=config.max_output_tokens,
+            max_tokens=INTERNAL_LLM_MAX_TOKENS,
         )
 
         summary = response.choices[0].message.content or ""

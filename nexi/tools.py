@@ -7,7 +7,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from nexi.backends.jina import clear_url_cache, close_http_client, get_http_client
+from nexi.backends.http_client import close_http_client, get_http_client
+from nexi.backends.jina import clear_url_cache
 from nexi.backends.orchestrators import run_fetch_chain, run_llm_chain, run_search_chain
 from nexi.config import CHUNK_SELECTOR_PROMPT, EXTRACTOR_PROMPT_TEMPLATE, Config
 

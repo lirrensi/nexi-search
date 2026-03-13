@@ -32,7 +32,6 @@ def _build_config() -> Config:
             },
         },
         default_effort="m",
-        max_output_tokens=4000,
     )
 
 

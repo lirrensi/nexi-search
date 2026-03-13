@@ -73,8 +73,6 @@ def _format_agent_response(result: SearchResult) -> str:
 async def nexi_agent(
     query: str,
     effort: str = "m",
-    max_iter: int | None = None,
-    time_target: int | None = None,
     verbose: bool = False,
 ) -> str:
     """Run the full NEXI agentic search workflow.
@@ -82,8 +80,6 @@ async def nexi_agent(
     Args:
         query: The search query to investigate.
         effort: Search depth/effort level: "s", "m", or "l".
-        max_iter: Override maximum search iterations.
-        time_target: Soft limit in seconds before forcing a final answer.
         verbose: Show detailed progress including tool calls and debug info.
 
     Returns:
@@ -95,12 +91,10 @@ async def nexi_agent(
     assert config is not None
 
     search_effort = effort or config.default_effort
-    search_time_target = time_target if time_target is not None else config.time_target
-    search_config = replace(
-        config,
-        default_effort=search_effort,
-        time_target=search_time_target,
-        max_output_tokens=config.max_output_tokens,
+    search_config = (
+        config
+        if search_effort == config.default_effort
+        else replace(config, default_effort=search_effort)
     )
 
     try:
@@ -108,8 +102,6 @@ async def nexi_agent(
             query=query,
             config=search_config,
             effort=search_effort,
-            max_iter=max_iter,
-            time_target=search_time_target,
             verbose=verbose,
             progress_callback=None,
         )

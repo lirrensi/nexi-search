@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from nexi.backends.jina import get_http_client
+from nexi.backends.http_client import get_http_client
 
 BASE_URL = "https://api.linkup.so/v1"
 
@@ -92,7 +92,11 @@ async def _search_single(
         response.raise_for_status()
         data = response.json()
     except httpx.HTTPStatusError as exc:
-        return {"query": query, "results": [], "error": f"HTTP {exc.response.status_code}: {exc.response.text}"}
+        return {
+            "query": query,
+            "results": [],
+            "error": f"HTTP {exc.response.status_code}: {exc.response.text}",
+        }
     except Exception as exc:
         return {"query": query, "results": [], "error": str(exc)}
 
@@ -134,7 +138,11 @@ async def _fetch_single(
         response.raise_for_status()
         data = response.json()
     except httpx.HTTPStatusError as exc:
-        return {"url": url, "content": "", "error": f"HTTP {exc.response.status_code}: {exc.response.text}"}
+        return {
+            "url": url,
+            "content": "",
+            "error": f"HTTP {exc.response.status_code}: {exc.response.text}",
+        }
     except Exception as exc:
         return {"url": url, "content": "", "error": str(exc)}
 

@@ -30,8 +30,6 @@ def _build_config() -> Config:
             },
         },
         default_effort="m",
-        time_target=600,
-        max_output_tokens=8192,
         max_context=100000,
         auto_compact_thresh=0.9,
     )

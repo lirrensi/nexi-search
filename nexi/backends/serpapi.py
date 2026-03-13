@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from nexi.backends.jina import get_http_client
+from nexi.backends.http_client import get_http_client
 
 BASE_URL = "https://serpapi.com/search.json"
 
@@ -61,7 +61,11 @@ async def _search_single(
         response.raise_for_status()
         data = response.json()
     except httpx.HTTPStatusError as exc:
-        return {"query": query, "results": [], "error": f"HTTP {exc.response.status_code}: {exc.response.text}"}
+        return {
+            "query": query,
+            "results": [],
+            "error": f"HTTP {exc.response.status_code}: {exc.response.text}",
+        }
     except Exception as exc:
         return {"query": query, "results": [], "error": str(exc)}
 
@@ -75,11 +79,7 @@ async def _search_single(
                 "title": item.get("title") or item.get("link") or "Untitled",
                 "url": item.get("link", ""),
                 "description": item.get("snippet") or "",
-                **(
-                    {"published_time": item["date"]}
-                    if isinstance(item.get("date"), str)
-                    else {}
-                ),
+                **({"published_time": item["date"]} if isinstance(item.get("date"), str) else {}),
             }
         )
     return {"query": query, "results": results}

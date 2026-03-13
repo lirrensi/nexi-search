@@ -1,6 +1,6 @@
 """NEXI - Intelligent web search CLI tool."""
 
-__version__ = "0.4.1"
+__version__ = "2.0.1"
 
 from nexi.config import (
     DEFAULT_SYSTEM_PROMPT_TEMPLATE,

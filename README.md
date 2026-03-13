@@ -8,9 +8,9 @@ NEXI is not just another search wrapper with a cute prompt and one hardcoded bac
 
 ---
 
-## Version 2.0
+## Version 2.0.1
 
-NEXI 2.0 is the big cleanup release. The grown-up one. The one where the tool stops being a fragile little demo and starts acting like a proper suite.
+NEXI 2.0.1 keeps the 2.0 cleanup release intact and sands down more of the rough edges.
 
 - ✨ provider chains are now the core model, with ordered fallbacks across LLM, search, and fetch
 - 🧾 config is now TOML at `~/.config/nexi/config.toml`
@@ -18,6 +18,8 @@ NEXI 2.0 is the big cleanup release. The grown-up one. The one where the tool st
 - 🛠️ `nexi`, `nexi-search`, and `nexi-fetch` are now clear first-class surfaces
 - 🔌 MCP now mirrors those same surfaces with `nexi_agent`, `nexi_search`, and `nexi_fetch`
 - ⚡ default fetch works out of the box with zero-config backends
+- 🎚️ public search-depth control is just `--effort`, while iteration and token budgets stay internal
+- ♻️ HTTP-backed providers reuse shared clients safely in long-lived CLI and MCP sessions
 
 If you are upgrading from an older release, treat this as a config migration. The old config shape is not the v2 contract anymore.
 
@@ -129,8 +131,8 @@ For the full canonical matrix, see `docs/provider-matrix.md`.
 ## Quick Start
 
 ```bash
-# Install
-uv tool install git+https://github.com/lirrensi/nexi-search.git
+# Install or upgrade
+uv tool install --upgrade git+https://github.com/lirrensi/nexi-search.git
 
 # First run creates the config template and exits
 nexi "what is the deal with rust async traits"
@@ -255,11 +257,11 @@ nexi-fetch --full "https://example.com/spec"
 | `nexi "query"` | Run the full agentic workflow |
 | `nexi -e s|m|l "query"` | Set quick, balanced, or deep effort |
 | `nexi --plain "query"` | Plain output for scripts |
-| `nexi --max-iter N "query"` | Override search iterations |
-| `nexi --time-target N "query"` | Force answer after N seconds |
+| `nexi --query-text "query"` | Pass the query explicitly instead of positionally |
 | `nexi --last N` | Show the last N search previews |
 | `nexi --prev` | Show the latest full result |
 | `nexi --show ID` | Show one saved result by ID |
+| `nexi --version` | Show the installed CLI version |
 
 ### Direct Tools 🔧
 

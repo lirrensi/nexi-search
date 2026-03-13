@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from nexi.backends.jina import get_http_client
+from nexi.backends.http_client import get_http_client
 
 BASE_URL = "https://api.search.brave.com/res/v1/web/search"
 
@@ -67,7 +67,11 @@ async def _search_single(
         response.raise_for_status()
         data = response.json()
     except httpx.HTTPStatusError as exc:
-        return {"query": query, "results": [], "error": f"HTTP {exc.response.status_code}: {exc.response.text}"}
+        return {
+            "query": query,
+            "results": [],
+            "error": f"HTTP {exc.response.status_code}: {exc.response.text}",
+        }
     except Exception as exc:
         return {"query": query, "results": [], "error": str(exc)}
 
@@ -81,11 +85,7 @@ async def _search_single(
                 "title": item.get("title") or item.get("url") or "Untitled",
                 "url": item.get("url", ""),
                 "description": item.get("description") or "",
-                **(
-                    {"published_time": item["age"]}
-                    if isinstance(item.get("age"), str)
-                    else {}
-                ),
+                **({"published_time": item["age"]} if isinstance(item.get("age"), str) else {}),
             }
         )
     return {"query": query, "results": results}

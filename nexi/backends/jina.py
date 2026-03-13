@@ -8,30 +8,14 @@ from typing import Any, cast
 
 import httpx
 
+from nexi.backends.http_client import close_http_client, get_http_client
+
 _url_cache: dict[str, str] = {}
-_http_client: httpx.AsyncClient | None = None
 
 
 def clear_url_cache() -> None:
     """Clear the in-memory URL cache."""
     _url_cache.clear()
-
-
-def get_http_client(timeout: float = 30.0) -> httpx.AsyncClient:
-    """Get or create the shared HTTP client."""
-    global _http_client
-    if _http_client is None:
-        limits = httpx.Limits(max_connections=10, max_keepalive_connections=5)
-        _http_client = httpx.AsyncClient(timeout=timeout, limits=limits)
-    return _http_client
-
-
-async def close_http_client() -> None:
-    """Close the shared HTTP client."""
-    global _http_client
-    if _http_client is not None:
-        await _http_client.aclose()
-        _http_client = None
 
 
 class JinaSearchProvider:

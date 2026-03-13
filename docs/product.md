@@ -234,12 +234,9 @@ nexi-fetch "https://example.com/spec"
 | Command | Description |
 |---------|-------------|
 | `nexi "query"` | Search with default effort |
-| `nexi -e s "query"` | Quick search (8 iterations) |
-| `nexi -e m "query"` | Balanced search (16 iterations) |
-| `nexi -e l "query"` | Thorough search (32 iterations) |
-| `nexi --max-iter N "query"` | Custom max iterations |
-| `nexi --time-target N "query"` | Force answer after N seconds |
-| `nexi --max-len N "query"` | Limit output tokens |
+| `nexi -e s "query"` | Quick search |
+| `nexi -e m "query"` | Balanced search |
+| `nexi -e l "query"` | Thorough search |
 | `nexi -v "query"` | Verbose mode (show all LLM calls) |
 | `nexi --plain "query"` | No colors/emoji (scripting) |
 
@@ -296,11 +293,10 @@ nexi-fetch "https://example.com/spec"
 The search loop **MUST** terminate when **any** of these conditions are met:
 
 1. `final_answer` tool called by LLM
-2. Time target exceeded (if set)
-3. Max iterations reached
-4. Context limit exceeded (after failed compaction)
-5. API error after all retries exhausted
-6. User cancellation (Ctrl+C)
+2. Effort budget exhausted, then NEXI requests the best final answer from gathered information
+3. Internal context guard rails stop further expansion and NEXI returns the best final answer available
+4. API error after all retries exhausted
+5. User cancellation (Ctrl+C)
 
 ### Citation Behavior
 
@@ -315,7 +311,7 @@ The search loop **MUST** terminate when **any** of these conditions are met:
 - Compaction preserves: system prompt, original query, last N assistant messages
 - Compaction generates dense summary of findings
 - If compaction fails, search continues with original messages
-- If still over limit after compaction, forced answer is returned
+- If context still cannot be recovered after compaction, NEXI stops expanding the search and returns the best final answer available
 
 ### Error Handling
 
@@ -363,13 +359,11 @@ The search loop **MUST** terminate when **any** of these conditions are met:
 | `fetch_backends` | Ordered fetch provider chain |
 | `providers` | Provider config objects keyed by provider instance name |
 | `default_effort` | Default effort level: `s`, `m`, or `l` |
-| `max_output_tokens` | Maximum tokens in final answer |
 
 ### Optional Fields
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `time_target` | `null` | Soft time limit in seconds |
 | `max_context` | `128000` | Model's context window limit |
 | `auto_compact_thresh` | `0.9` | Trigger compaction at this fraction |
 | `compact_target_words` | `5000` | Target word count for summaries |
@@ -388,8 +382,6 @@ search_backends = []
 fetch_backends = ["crawl4ai_local", "markdown_new"]
 
 default_effort = "m"
-max_output_tokens = 8192
-time_target = 600
 max_context = 128000
 auto_compact_thresh = 0.9
 compact_target_words = 5000
@@ -442,11 +434,11 @@ headless = true
 
 ## Effort Levels
 
-| Level | Iterations | Description | When to Use |
-|-------|------------|-------------|-------------|
-| `s` | 8 | Quick search | Simple facts, definitions |
-| `m` | 16 | Balanced | Most queries (default) |
-| `l` | 32 | Thorough research | Complex topics, deep dives |
+| Level | Description | When to Use |
+|-------|-------------|-------------|
+| `s` | Quick search | Simple facts, definitions |
+| `m` | Balanced | Most queries (default) |
+| `l` | Thorough research | Complex topics, deep dives |
 
 ---
 
@@ -520,8 +512,7 @@ NEXI deliberately does **NOT** aim to be:
 |-------|----------|
 | 401 Unauthorized | Check provider config and API keys |
 | 429 Rate Limit | Wait or rely on the next configured provider |
-| Time target hit | Increase `time_target` or use `--time-target` |
-| Context limit exceeded | Increase `max_context` or lower `auto_compact_thresh` |
+| Search finalized early under context guard rails | Increase `max_context` or tune compaction settings |
 | UTF-8 garbled (Windows) | Use `--plain` or Windows Terminal |
 | MCP Server not found | Install with `uv sync --group mcp` |
 

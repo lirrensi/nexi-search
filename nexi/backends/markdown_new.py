@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 
-from nexi.backends.jina import get_http_client
+from nexi.backends.http_client import get_http_client
 
 
 class MarkdownNewFetchProvider:

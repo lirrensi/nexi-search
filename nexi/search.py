@@ -7,11 +7,11 @@ import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any
 
 from nexi.backends.orchestrators import ProviderChainError, run_llm_chain
 from nexi.compaction import compact_conversation, should_compact
-from nexi.config import EFFORT_LEVELS, Config, get_system_prompt
+from nexi.config import EFFORT_LEVELS, INTERNAL_LLM_MAX_TOKENS, Config, get_system_prompt
 from nexi.token_counter import count_messages_tokens, estimate_page_tokens
 from nexi.tools import TOOLS, clear_url_cache, close_http_client, execute_tool
 
@@ -27,7 +27,6 @@ class SearchResult:
     iterations: int = 0
     duration_s: float = 0.0
     tokens: int = 0
-    reached_max_iter: bool = False
 
 
 ProgressCallback = Callable[..., None]
@@ -66,7 +65,7 @@ async def _request_final_answer(
             tools=_get_tool_schemas(),
             config=config,
             verbose=verbose,
-            max_tokens=config.max_output_tokens,
+            max_tokens=INTERNAL_LLM_MAX_TOKENS,
         )
 
         if verbose:
@@ -109,8 +108,6 @@ async def run_search(
     query: str,
     config: Config,
     effort: str = "m",
-    max_iter: int | None = None,
-    time_target: int | None = None,
     verbose: bool = False,
     progress_callback: ProgressCallback | None = None,
     initial_messages: list[dict[str, Any]] | None = None,
@@ -121,8 +118,6 @@ async def run_search(
         query: User's search query
         config: NEXI configuration
         effort: Effort level (s/m/l)
-        max_iter: Override max iterations
-        time_target: Optional time limit in seconds (None = no limit)
         verbose: Show detailed progress
         progress_callback: Called with (message, iteration, total)
 
@@ -134,22 +129,13 @@ async def run_search(
     # Clear URL cache at start of search session
     clear_url_cache()
 
-    # Determine max iterations with fallback to medium
-    if max_iter is None:
-        try:
-            max_iter = EFFORT_LEVELS.get(effort, EFFORT_LEVELS["m"])["max_iter"]
-        except (KeyError, TypeError):
-            max_iter = EFFORT_LEVELS["m"]["max_iter"]
-
-    # Ensure max_iter is an int
-    resolved_max_iter = max_iter if isinstance(max_iter, int) else EFFORT_LEVELS["m"]["max_iter"]
-    max_iterations = cast(int, resolved_max_iter)
-
-    # Determine timeout (use CLI option if provided, otherwise use config)
-    time_target_total = time_target if time_target is not None else config.time_target
+    try:
+        max_iterations = int(EFFORT_LEVELS[effort]["max_iter"])
+    except (KeyError, TypeError, ValueError):
+        max_iterations = int(EFFORT_LEVELS["m"]["max_iter"])
 
     # Load system prompt
-    system_prompt = get_system_prompt(max_iterations, effort)
+    system_prompt = get_system_prompt(effort)
 
     # Initialize conversation
     if initial_messages is not None:
@@ -250,18 +236,6 @@ async def run_search(
 
     try:
         for current_iteration in range(1, max_iterations + 1):
-            # Check timeout (only if time_target is set)
-            if time_target_total is not None:
-                elapsed = time.time() - start_time
-                if elapsed >= time_target_total:
-                    report_progress(f"Time target reached after {elapsed:.1f}s", current_iteration)
-                    final_answer = await _request_final_answer(
-                        messages=messages,
-                        config=config,
-                        verbose=verbose,
-                    )
-                    break
-
             report_progress(f"Iteration {current_iteration}/{max_iterations}", current_iteration)
 
             try:
@@ -270,7 +244,7 @@ async def run_search(
                     tools=_get_tool_schemas(),
                     config=config,
                     verbose=verbose,
-                    max_tokens=config.max_output_tokens,
+                    max_tokens=INTERNAL_LLM_MAX_TOKENS,
                 )
             except ProviderChainError as exc:
                 if verbose:
@@ -522,7 +496,6 @@ async def run_search(
         iterations=current_iteration,
         duration_s=duration,
         tokens=total_tokens,
-        reached_max_iter=current_iteration >= max_iterations,
     )
 
 
@@ -567,8 +540,6 @@ def run_search_sync(
     query: str,
     config: Config,
     effort: str = "m",
-    max_iter: int | None = None,
-    time_target: int | None = None,
     verbose: bool = False,
     progress_callback: ProgressCallback | None = None,
     initial_messages: list[dict[str, Any]] | None = None,
@@ -579,8 +550,6 @@ def run_search_sync(
         query: User's search query
         config: NEXI configuration
         effort: Effort level (s/m/l)
-        max_iter: Override max iterations
-        time_target: Optional time limit in seconds (None = no limit)
         verbose: Show detailed progress
         progress_callback: Called with (message, iteration, total)
         initial_messages: Optional conversation history for multi-turn
@@ -597,8 +566,6 @@ def run_search_sync(
                 query=query,
                 config=config,
                 effort=effort,
-                max_iter=max_iter,
-                time_target=time_target,
                 verbose=verbose,
                 progress_callback=progress_callback,
                 initial_messages=initial_messages,
