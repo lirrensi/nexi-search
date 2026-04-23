@@ -24,6 +24,7 @@ If a provider family is not listed here, it is not part of the product.
 | --- | --- | --- | --- | --- | --- | --- |
 | `openai_compatible` | LLM | `openrouter`, `openai`, `local_openai` | Commented example | `base_url`, `api_key`, `model` | Supported | Covers OpenRouter, OpenAI, local OpenAI-compatible servers, and similar APIs. |
 | `jina` | Search, Fetch | `jina` | Commented example | `api_key` | Supported | Search requires user activation; fetch is available but not zero-config. |
+| `searxng` | Search | `searxng` | Commented example | `base_url` | Supported | Self-hosted search backend; optional query scoping via `engines`, `categories`, `language`, and `safesearch`. |
 | `markdown_new` | Fetch | `markdown_new` | Active by default | none | Supported | Zero-key remote markdown fetch fallback. |
 | `crawl4ai` | Fetch | `crawl4ai_local` | Active by default | none | Supported | Local/runtime-backed fetch provider. Optional runtime dependency remains a user environment concern. |
 | `tavily` | Search, Fetch | `tavily` | Commented example | `api_key` | Supported | Source-first search and extraction provider family. |

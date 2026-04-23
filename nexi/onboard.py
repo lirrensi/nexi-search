@@ -19,6 +19,7 @@ from nexi.config_template import (
 LLM_CHOICES = ["openrouter", "openai", "local_openai", "custom_llm"]
 SEARCH_CHOICES = [
     "jina",
+    "searxng",
     "tavily",
     "exa",
     "firecrawl",
@@ -187,6 +188,7 @@ def _build_setup(choice: str) -> tuple[str, dict[str, Any]] | None:
 
     if choice in {
         "jina",
+        "searxng",
         "tavily",
         "exa",
         "firecrawl",
@@ -196,10 +198,20 @@ def _build_setup(choice: str) -> tuple[str, dict[str, Any]] | None:
         "serper",
         "perplexity",
     }:
+        provider_config = deepcopy(PROVIDER_EXAMPLES[choice])
+        if choice == "searxng":
+            base_url = _ask_text(
+                "SearXNG base URL:",
+                str(PROVIDER_EXAMPLES[choice]["base_url"]),
+            )
+            if base_url is None:
+                return None
+            provider_config["base_url"] = base_url
+            return choice, provider_config
+
         api_key = _ask_password(f"{choice} API key:")
         if api_key is None:
             return None
-        provider_config = deepcopy(PROVIDER_EXAMPLES[choice])
         provider_config["api_key"] = api_key
         return choice, provider_config
 

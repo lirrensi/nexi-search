@@ -96,7 +96,7 @@ NEXI is an intelligent research CLI built around an agentic search loop powered 
 │  ┌──────────────────────┐      ┌──────────────────────────────┐ │
 │  │   LLM Providers      │      │ Search / Fetch Providers     │ │
 │  │   (ordered chain)    │      │ (ordered chains)             │ │
-│  │ - OpenRouter         │      │ - Jina                       │ │
+│  │ - OpenRouter         │      │ - Jina / SearXNG             │ │
 │  │ - OpenAI-compatible  │      │ - Exa / Tavily / others      │ │
 │  └──────────────────────┘      └──────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────┘
@@ -410,11 +410,11 @@ headless = true
 # model = "google/gemini-2.5-flash-lite"
 
 # Uncomment one search provider to activate it.
-# search_backends = ["jina"]
+# search_backends = ["searxng"]
 #
-# [providers.jina]
-# type = "jina"
-# api_key = "<your_api_key>"
+# [providers.searxng]
+# type = "searxng"
+# base_url = "https://search.example.org"
 ```
 
 - Each listed backend name MUST have a matching entry in `providers`

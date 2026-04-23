@@ -16,6 +16,7 @@ from nexi.config import (
     load_config,
     validate_config,
 )
+from nexi.config_doctor import build_doctor_report
 from nexi.config_template import render_config_toml, write_default_template
 
 
@@ -86,8 +87,10 @@ def test_write_default_template_writes_config_toml(tmp_path: Path) -> None:
     assert "[providers.markdown_new]" in text
     assert "# [providers.openrouter]" in text
     assert text.count("# [providers.jina]") == 1
+    assert text.count("# [providers.searxng]") == 1
     assert "Define each [providers.<name>] table only once" in text
     assert '# - add "jina" to search_backends' in text
+    assert '# - add "searxng" to search_backends' in text
     assert '# - add "jina" to fetch_backends' in text
     assert '# search_backends = ["jina"]' not in text
 
@@ -117,6 +120,42 @@ def test_render_config_toml_reuses_one_provider_block_for_shared_provider() -> N
     assert text.count("[providers.jina]") == 1
     assert 'search_backends = ["jina"]' in text
     assert 'fetch_backends = ["jina"]' in text
+
+
+def test_build_doctor_report_accepts_searxng_search_provider() -> None:
+    """Doctor readiness passes with a configured SearXNG search provider."""
+    config = Config(
+        llm_backends=["openrouter"],
+        search_backends=["searxng"],
+        fetch_backends=["crawl4ai_local", "markdown_new"],
+        providers={
+            "openrouter": {
+                "type": "openai_compatible",
+                "base_url": "https://openrouter.ai/api/v1",
+                "api_key": "test-key",
+                "model": "test-model",
+            },
+            "searxng": {
+                "type": "searxng",
+                "base_url": "https://search.example.org",
+            },
+            "crawl4ai_local": {
+                "type": "crawl4ai",
+                "headless": True,
+            },
+            "markdown_new": {
+                "type": "markdown_new",
+                "method": "auto",
+                "retain_images": False,
+            },
+        },
+        default_effort="m",
+    )
+
+    report = build_doctor_report(config)
+
+    assert report["nexi"] == []
+    assert report["nexi-search"] == []
 
 
 def test_load_config_parses_toml(tmp_path: Path, monkeypatch) -> None:
@@ -224,6 +263,7 @@ def test_save_config_writes_commented_examples(tmp_path: Path, monkeypatch) -> N
 
     assert "[providers.openrouter]" in text
     assert "# [providers.openai]" in text
+    assert "# [providers.searxng]" in text
     assert "# [providers.custom_search]" in text
 
 

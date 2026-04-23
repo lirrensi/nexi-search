@@ -62,6 +62,14 @@ PROVIDER_EXAMPLES: dict[str, dict[str, Any]] = {
         "type": "jina",
         "api_key": "<your_api_key>",
     },
+    "searxng": {
+        "type": "searxng",
+        "base_url": "https://search.example.org",
+        "language": "en",
+        "categories": ["general"],
+        "safesearch": 0,
+        "format": "json",
+    },
     "tavily": {
         "type": "tavily",
         "api_key": "<your_api_key>",
@@ -119,6 +127,7 @@ PROVIDER_EXAMPLES: dict[str, dict[str, Any]] = {
 LLM_EXAMPLE_ORDER = ["openrouter", "openai", "local_openai", "custom_llm"]
 SEARCH_EXAMPLE_ORDER = [
     "jina",
+    "searxng",
     "tavily",
     "exa",
     "firecrawl",
@@ -131,6 +140,7 @@ SEARCH_EXAMPLE_ORDER = [
 ]
 FETCH_EXAMPLE_ORDER = [
     "jina",
+    "searxng",
     "tavily",
     "exa",
     "firecrawl",

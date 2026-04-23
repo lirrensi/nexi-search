@@ -11,6 +11,7 @@ from nexi.backends.exa import ExaFetchProvider, ExaSearchProvider
 from nexi.backends.firecrawl import FirecrawlFetchProvider, FirecrawlSearchProvider
 from nexi.backends.linkup import LinkupFetchProvider, LinkupSearchProvider
 from nexi.backends.perplexity_search import PerplexitySearchProvider
+from nexi.backends.searxng import SearXNGSearchProvider
 from nexi.backends.serpapi import SerpAPISearchProvider
 from nexi.backends.serper import SerperSearchProvider
 from nexi.backends.tavily import TavilyFetchProvider, TavilySearchProvider
@@ -152,7 +153,9 @@ async def test_exa_providers_normalize_search_and_fetch(monkeypatch) -> None:
     monkeypatch.setattr("nexi.backends.exa.get_http_client", lambda timeout=30.0: client)
 
     search_payload = await ExaSearchProvider().search(["beta"], {"api_key": "key"}, 5, False)
-    fetch_payload = await ExaFetchProvider().fetch(["https://b.example"], {"api_key": "key"}, 5, False)
+    fetch_payload = await ExaFetchProvider().fetch(
+        ["https://b.example"], {"api_key": "key"}, 5, False
+    )
 
     assert search_payload["searches"][0]["results"][0]["description"] == "Semantic snippet"
     assert fetch_payload == {"pages": [{"url": "https://b.example", "content": "# B"}]}
@@ -215,7 +218,9 @@ async def test_linkup_providers_normalize_search_and_fetch(monkeypatch) -> None:
     monkeypatch.setattr("nexi.backends.linkup.get_http_client", lambda timeout=30.0: client)
 
     search_payload = await LinkupSearchProvider().search(["delta"], {"api_key": "key"}, 5, False)
-    fetch_payload = await LinkupFetchProvider().fetch(["https://d.example"], {"api_key": "key"}, 5, False)
+    fetch_payload = await LinkupFetchProvider().fetch(
+        ["https://d.example"], {"api_key": "key"}, 5, False
+    )
 
     assert search_payload["searches"][0]["results"][0]["title"] == "D"
     assert fetch_payload == {"pages": [{"url": "https://d.example", "content": "# D"}]}
@@ -333,3 +338,58 @@ async def test_perplexity_search_provider_normalizes_results(monkeypatch) -> Non
     )
 
     assert payload["searches"][0]["results"][0]["title"] == "H"
+
+
+@pytest.mark.asyncio
+async def test_searxng_search_provider_normalizes_results_and_params(monkeypatch) -> None:
+    """SearXNG search adapter normalizes results and passes query params."""
+    client = FakeHttpClient(
+        [
+            FakeResponse(
+                {
+                    "results": [
+                        {
+                            "title": "I",
+                            "url": "https://i.example",
+                            "content": "SearXNG snippet",
+                            "publishedDate": "2026-03-13",
+                            "engine": "google",
+                        }
+                    ]
+                }
+            )
+        ]
+    )
+    monkeypatch.setattr("nexi.backends.searxng.get_http_client", lambda timeout=30.0: client)
+
+    payload = await SearXNGSearchProvider().search(
+        ["iota"],
+        {
+            "base_url": "https://search.example.org",
+            "categories": ["general", "science"],
+            "engines": "google,bing",
+            "language": "en",
+            "safesearch": 1,
+            "pageno": 2,
+            "format": "json",
+        },
+        5,
+        False,
+    )
+
+    assert client.calls[0][1] == "https://search.example.org/search"
+    assert client.calls[0][2]["q"] == "iota"
+    assert client.calls[0][2]["format"] == "json"
+    assert client.calls[0][2]["categories"] == "general,science"
+    assert client.calls[0][2]["engines"] == "google,bing"
+    assert client.calls[0][2]["language"] == "en"
+    assert client.calls[0][2]["safesearch"] == 1
+    assert client.calls[0][2]["pageno"] == 2
+    assert payload["searches"][0]["results"][0]["description"] == "SearXNG snippet"
+    assert payload["searches"][0]["results"][0]["engine"] == "google"
+
+
+def test_searxng_search_provider_rejects_missing_base_url() -> None:
+    """SearXNG search config requires a base_url."""
+    with pytest.raises(ValueError, match="base_url"):
+        SearXNGSearchProvider().validate_config({"format": "json"})

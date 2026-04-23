@@ -90,6 +90,7 @@ Here is the practical short version of what NEXI supports today:
 ### Search 🔎
 
 - `jina`
+- `searxng` (self-hosted)
 - `tavily`
 - `exa`
 - `firecrawl`
@@ -112,6 +113,8 @@ Here is the practical short version of what NEXI supports today:
 - custom Python fetch providers via `provider-<file>`
 
 For the full canonical matrix, see `docs/provider-matrix.md`.
+
+SearXNG is fully supported for local self-hosting.
 
 ---
 
@@ -148,6 +151,24 @@ You will typically need:
 - one LLM provider for `nexi`
 - one search provider for `nexi` and `nexi-search`
 - fetch can work immediately with the default zero-config fetch backends
+
+### SearXNG locally
+
+If you want a local search backend, SearXNG works well with Docker:
+
+```bash
+docker run -d --name searxng -p 8999:8080 searxng/searxng:latest
+```
+
+Then point NEXI at it in `~/.config/nexi/config.toml`:
+
+```toml
+search_backends = ["searxng"]
+
+[providers.searxng]
+type = "searxng"
+base_url = "http://localhost:8999"
+```
 
 ---
 
@@ -199,7 +220,7 @@ headless = true
 
 # Uncomment one LLM and one search provider.
 # llm_backends = ["openrouter"]
-# search_backends = ["jina"]
+# search_backends = ["searxng"]
 #
 # [providers.openrouter]
 # type = "openai_compatible"
@@ -207,9 +228,9 @@ headless = true
 # api_key = "<your_api_key>"
 # model = "google/gemini-2.5-flash-lite"
 #
-# [providers.jina]
-# type = "jina"
-# api_key = "<your_api_key>"
+# [providers.searxng]
+# type = "searxng"
+# base_url = "http://localhost:8999"
 ```
 
 ---

@@ -15,6 +15,7 @@ from nexi.backends.linkup import LinkupFetchProvider, LinkupSearchProvider
 from nexi.backends.markdown_new import MarkdownNewFetchProvider
 from nexi.backends.openai_compatible import OpenAICompatibleLLMProvider
 from nexi.backends.perplexity_search import PerplexitySearchProvider
+from nexi.backends.searxng import SearXNGSearchProvider
 from nexi.backends.serpapi import SerpAPISearchProvider
 from nexi.backends.serper import SerperSearchProvider
 from nexi.backends.tavily import TavilyFetchProvider, TavilySearchProvider
@@ -26,6 +27,7 @@ SEARCH_PROVIDER_REGISTRY: dict[str, type[SearchProvider]] = {
     "jina": JinaSearchProvider,
     "linkup": LinkupSearchProvider,
     "perplexity_search": PerplexitySearchProvider,
+    "searxng": SearXNGSearchProvider,
     "serpapi": SerpAPISearchProvider,
     "serper": SerperSearchProvider,
     "tavily": TavilySearchProvider,

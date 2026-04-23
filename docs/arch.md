@@ -1213,7 +1213,7 @@ NEXI supports swappable provider chains for LLM, search, and fetch capabilities.
 Example configuration:
 ```toml
 llm_backends = ["openrouter"]
-search_backends = ["jina"]
+search_backends = ["searxng"]
 fetch_backends = ["crawl4ai_local", "markdown_new"]
 
 [providers.openrouter]
@@ -1222,9 +1222,9 @@ base_url = "https://openrouter.ai/api/v1"
 api_key = "key123"
 model = "google/gemini-2.5-flash-lite"
 
-[providers.jina]
-type = "jina"
-api_key = "key456"
+[providers.searxng]
+type = "searxng"
+base_url = "https://search.example.org"
 ```
 
 ### Custom Prompts

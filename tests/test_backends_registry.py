@@ -18,6 +18,7 @@ from nexi.backends.registry import (
     resolve_llm_provider,
     resolve_search_provider,
 )
+from nexi.backends.searxng import SearXNGSearchProvider
 from nexi.backends.serpapi import SerpAPISearchProvider
 from nexi.backends.serper import SerperSearchProvider
 from nexi.backends.tavily import TavilyFetchProvider, TavilySearchProvider
@@ -97,6 +98,16 @@ def test_resolve_serper_and_perplexity_search_providers_success() -> None:
 
     assert serper_provider is SerperSearchProvider
     assert perplexity_provider is PerplexitySearchProvider
+
+
+def test_resolve_searxng_search_provider_success() -> None:
+    """SearXNG search provider resolves correctly."""
+    provider = resolve_search_provider(
+        "searxng",
+        {"searxng": {"type": "searxng", "base_url": "https://search.example.org"}},
+    )
+
+    assert provider is SearXNGSearchProvider
 
 
 def test_resolve_markdown_new_fetch_provider_success() -> None:
