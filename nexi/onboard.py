@@ -32,6 +32,8 @@ SEARCH_CHOICES = [
 ]
 FETCH_CHOICES = [
     "crawl4ai_local",
+    "special_trafilatura",
+    "special_playwright",
     "markdown_new",
     "jina",
     "tavily",
@@ -68,7 +70,7 @@ def run_onboarding() -> None:
         return
 
     keep_default_fetch = questionary.confirm(
-        "Keep the default fetch chain [crawl4ai_local, markdown_new]?",
+        "Keep the default fetch chain [crawl4ai_local, special_trafilatura, special_playwright, markdown_new]?",
         default=True,
     ).ask()
     if keep_default_fetch is None:

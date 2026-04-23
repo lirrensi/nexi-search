@@ -1,5 +1,11 @@
 """Tests for direct search and fetch CLI entrypoints."""
 
+# FILE: tests/test_direct_cli.py
+# PURPOSE: Verify direct CLI surfaces, including provider override behavior.
+# OWNS: Click-level tests for nexi-search and nexi-fetch.
+# EXPORTS: none
+# DOCS: agent_chat/plan_direct_provider_override_2026-04-24.md
+
 from __future__ import annotations
 
 import json
@@ -29,6 +35,16 @@ def _build_config() -> Config:
             "jina": {
                 "type": "jina",
                 "api_key": "test-jina",
+            },
+            "brave": {
+                "type": "brave",
+                "api_key": "test-brave",
+            },
+            "special_trafilatura": {
+                "type": "special_trafilatura",
+            },
+            "special_playwright": {
+                "type": "special_playwright",
             },
         },
         default_effort="m",
@@ -62,6 +78,49 @@ def test_nexi_search_json() -> None:
     assert result.exit_code == 0
     assert json.loads(result.output) == payload
     mock_chain.assert_awaited_once()
+
+
+def test_nexi_search_provider_override_uses_single_backend() -> None:
+    """nexi-search --provider narrows the chain to one provider."""
+    runner = CliRunner()
+    payload = {"searches": [{"query": "test query", "results": []}], "provider_failures": []}
+
+    with (
+        patch("nexi.search_cli.ensure_config", return_value=_build_config()),
+        patch("nexi.search_cli.check_command_readiness") as mock_readiness,
+        patch(
+            "nexi.search_cli.run_search_chain", new=AsyncMock(return_value=payload)
+        ) as mock_chain,
+    ):
+        result = runner.invoke(search_main, ["--provider", "jina", "test query"])
+
+    assert result.exit_code == 0
+    mock_readiness.assert_not_called()
+    mock_chain.assert_awaited_once()
+    call_config = mock_chain.await_args.args[1]
+    assert call_config.search_backends == ["jina"]
+
+
+def test_nexi_search_provider_override_capability_mismatch_fails() -> None:
+    """nexi-search rejects fetch-only provider overrides."""
+    runner = CliRunner()
+
+    with patch("nexi.search_cli.ensure_config", return_value=_build_config()):
+        result = runner.invoke(search_main, ["--provider", "special_trafilatura", "test query"])
+
+    assert result.exit_code != 0
+    assert "Unsupported search provider type" in result.output
+
+
+def test_nexi_search_provider_override_missing_provider_fails() -> None:
+    """nexi-search rejects unknown provider overrides."""
+    runner = CliRunner()
+
+    with patch("nexi.search_cli.ensure_config", return_value=_build_config()):
+        result = runner.invoke(search_main, ["--provider", "missing", "test query"])
+
+    assert result.exit_code != 0
+    assert "Missing provider instance: missing" in result.output
 
 
 def test_nexi_search_missing_config_bootstraps_cleanly() -> None:
@@ -106,6 +165,10 @@ def test_nexi_fetch_json() -> None:
     with (
         patch("nexi.fetch_cli.ensure_config", return_value=_build_config()),
         patch("nexi.fetch_cli.check_command_readiness", return_value=[]),
+        patch(
+            "nexi.fetch_cli.post_process_direct_fetch_payload",
+            side_effect=lambda payload, **kwargs: payload,
+        ) as mock_post,
         patch("nexi.fetch_cli.web_get", new=AsyncMock(return_value=payload)) as mock_get,
     ):
         result = runner.invoke(fetch_main, ["--json", "https://example.com"])
@@ -113,6 +176,87 @@ def test_nexi_fetch_json() -> None:
     assert result.exit_code == 0
     assert json.loads(result.output) == payload
     mock_get.assert_awaited_once()
+    mock_post.assert_called_once()
+
+
+def test_nexi_fetch_provider_override_uses_single_backend() -> None:
+    """nexi-fetch --provider narrows the chain to one provider."""
+    runner = CliRunner()
+    payload = {
+        "pages": [{"url": "https://example.com", "content": "body"}],
+        "provider_failures": [],
+    }
+
+    with (
+        patch("nexi.fetch_cli.ensure_config", return_value=_build_config()),
+        patch("nexi.fetch_cli.check_command_readiness") as mock_readiness,
+        patch(
+            "nexi.fetch_cli.post_process_direct_fetch_payload",
+            side_effect=lambda payload, **kwargs: payload,
+        ),
+        patch("nexi.fetch_cli.web_get", new=AsyncMock(return_value=payload)) as mock_get,
+    ):
+        result = runner.invoke(
+            fetch_main,
+            ["--provider", "special_trafilatura", "https://example.com"],
+        )
+
+    assert result.exit_code == 0
+    mock_readiness.assert_not_called()
+    mock_get.assert_awaited_once()
+    call_config = mock_get.await_args.kwargs["config"]
+    assert call_config.fetch_backends == ["special_trafilatura"]
+
+
+def test_nexi_fetch_provider_override_capability_mismatch_fails() -> None:
+    """nexi-fetch rejects search-only provider overrides."""
+    runner = CliRunner()
+
+    with patch("nexi.fetch_cli.ensure_config", return_value=_build_config()):
+        result = runner.invoke(fetch_main, ["--provider", "brave", "https://example.com"])
+
+    assert result.exit_code != 0
+    assert "Unsupported fetch provider type" in result.output
+
+
+def test_nexi_fetch_provider_override_missing_provider_fails() -> None:
+    """nexi-fetch rejects unknown provider overrides."""
+    runner = CliRunner()
+
+    with patch("nexi.fetch_cli.ensure_config", return_value=_build_config()):
+        result = runner.invoke(fetch_main, ["--provider", "missing", "https://example.com"])
+
+    assert result.exit_code != 0
+    assert "Missing provider instance: missing" in result.output
+
+
+def test_nexi_fetch_text_includes_spillover_path() -> None:
+    """nexi-fetch text output shows the spillover file path when present."""
+    runner = CliRunner()
+    payload = {
+        "pages": [
+            {
+                "url": "https://example.com",
+                "content": "https://example.com\n---\nBody",
+                "full_content_path": r"C:\Temp\nexi-fetch-full.txt",
+            }
+        ],
+        "provider_failures": [],
+    }
+
+    with (
+        patch("nexi.fetch_cli.ensure_config", return_value=_build_config()),
+        patch("nexi.fetch_cli.check_command_readiness", return_value=[]),
+        patch(
+            "nexi.fetch_cli.post_process_direct_fetch_payload",
+            side_effect=lambda payload, **kwargs: payload,
+        ),
+        patch("nexi.fetch_cli.web_get", new=AsyncMock(return_value=payload)),
+    ):
+        result = runner.invoke(fetch_main, ["https://example.com"])
+
+    assert result.exit_code == 0
+    assert r"Full content saved to: C:\Temp\nexi-fetch-full.txt" in result.output
 
 
 def test_nexi_fetch_missing_config_bootstraps_cleanly() -> None:

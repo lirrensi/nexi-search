@@ -15,6 +15,7 @@ except ImportError as err:
 from nexi.backends.orchestrators import run_search_chain
 from nexi.config import Config, ConfigCreatedError, ensure_config, format_config_created_message
 from nexi.config_doctor import check_command_readiness
+from nexi.direct_fetch import post_process_direct_fetch_payload
 from nexi.search import SearchResult, run_search
 from nexi.tools import web_get
 
@@ -161,13 +162,18 @@ async def nexi_fetch(
     assert config is not None
 
     try:
-        return await web_get(
+        payload = await web_get(
             urls=urls,
             config=config,
             verbose=verbose,
             instructions=instructions,
             get_full=full,
             use_chunks=chunks,
+        )
+        return post_process_direct_fetch_payload(
+            payload,
+            max_tokens=config.direct_fetch_max_tokens,
+            encoding_name=config.tokenizer_encoding,
         )
     except Exception as exc:
         return {"error": f"Direct fetch failed: {exc}"}

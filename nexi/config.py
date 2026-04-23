@@ -46,6 +46,7 @@ DEFAULT_CONFIG = {
     "preserve_last_n_messages": DEFAULT_SCALAR_CONFIG["preserve_last_n_messages"],
     "tokenizer_encoding": DEFAULT_SCALAR_CONFIG["tokenizer_encoding"],
     "provider_timeout": DEFAULT_SCALAR_CONFIG["provider_timeout"],
+    "direct_fetch_max_tokens": DEFAULT_SCALAR_CONFIG["direct_fetch_max_tokens"],
     "search_provider_retries": DEFAULT_SCALAR_CONFIG["search_provider_retries"],
     "fetch_provider_retries": DEFAULT_SCALAR_CONFIG["fetch_provider_retries"],
 }
@@ -156,6 +157,7 @@ class Config:
     preserve_last_n_messages: int = 3
     tokenizer_encoding: str = "cl100k_base"
     provider_timeout: int = 30
+    direct_fetch_max_tokens: int = 8000
     search_provider_retries: int = 2
     fetch_provider_retries: int = 2
 
@@ -325,6 +327,12 @@ def validate_config(config: dict[str, Any]) -> tuple[bool, list[str]]:
         not isinstance(provider_timeout, int) or provider_timeout <= 0
     ):
         errors.append("provider_timeout must be a positive integer")
+
+    direct_fetch_max_tokens = config.get("direct_fetch_max_tokens")
+    if direct_fetch_max_tokens is not None and (
+        not isinstance(direct_fetch_max_tokens, int) or direct_fetch_max_tokens <= 0
+    ):
+        errors.append("direct_fetch_max_tokens must be a positive integer")
 
     search_provider_retries = config.get("search_provider_retries")
     if search_provider_retries is not None and (

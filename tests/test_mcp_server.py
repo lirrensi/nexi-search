@@ -180,10 +180,17 @@ async def test_nexi_search_missing_config_returns_error_object(mock_ensure_confi
 
 @patch("nexi.mcp_server.check_command_readiness", return_value=[])
 @patch("nexi.mcp_server.ensure_config")
+@patch(
+    "nexi.mcp_server.post_process_direct_fetch_payload",
+    side_effect=lambda payload, **kwargs: payload,
+)
 @patch("nexi.mcp_server.web_get", new_callable=AsyncMock)
 @pytest.mark.asyncio
 async def test_nexi_fetch_returns_direct_payload(
-    mock_web_get, mock_ensure_config, _mock_readiness
+    mock_web_get,
+    _mock_post_process,
+    mock_ensure_config,
+    _mock_readiness,
 ) -> None:
     """nexi_fetch returns the direct fetch payload."""
     from nexi.mcp_server import nexi_fetch
@@ -199,6 +206,7 @@ async def test_nexi_fetch_returns_direct_payload(
 
     assert result == payload
     mock_web_get.assert_awaited_once()
+    _mock_post_process.assert_called_once()
 
 
 @pytest.mark.asyncio

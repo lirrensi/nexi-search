@@ -34,7 +34,7 @@ nexi doctor
 ```toml
 llm_backends = []
 search_backends = []
-fetch_backends = ["crawl4ai_local", "markdown_new"]
+fetch_backends = ["crawl4ai_local", "special_trafilatura", "special_playwright", "markdown_new"]
 
 default_effort = "m"
 
@@ -73,8 +73,8 @@ headless = true
    - Search requires a configured provider before `nexi` can run end-to-end
 
 3. **Fetch providers**
-   - `crawl4ai` and `markdown_new` are the default zero-config fetch backends in the template
-   - They can work without an API key, though `crawl4ai` still depends on the local runtime being available
+   - `crawl4ai`, `special_trafilatura`, `special_playwright`, and `markdown_new` are the default zero-config fetch backends in the template
+   - They can work without an API key, though `crawl4ai` and `special_playwright` still depend on their local runtime being available
 
 ## Test
 
@@ -82,6 +82,8 @@ headless = true
 nexi --plain "hello world"
 nexi-search --json "hello world"
 nexi-fetch --json "https://example.com"
+nexi-search --provider jina "hello world"
+nexi-fetch --provider special_trafilatura "https://example.com"
 ```
 
 The public search-depth control is `-e s|m|l`; output-token and iteration budgets are internal now.
@@ -96,3 +98,4 @@ The public search-depth control is `-e s|m|l`; output-token and iteration budget
 | `nexi-search` not ready | Run `nexi doctor` and enable one search provider |
 | `nexi-fetch` not ready | Run `nexi doctor` and enable one fetch provider |
 | No search results | Check the active search provider key is valid |
+| `--provider` mismatch | Use a provider family that matches the command (`search` or `fetch`) |

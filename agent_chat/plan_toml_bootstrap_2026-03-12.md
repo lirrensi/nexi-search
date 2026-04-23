@@ -51,10 +51,10 @@ Create a new module `nexi/config_template.py`.
 
 In `nexi/config_template.py`, define the canonical rendered template for the exact provider examples documented in `docs/provider-matrix.md`:
 
-- active-by-default fetch instances: `crawl4ai_local`, `markdown_new`
+- active-by-default fetch instances: `crawl4ai_local`, `special_trafilatura`, `special_playwright`, `markdown_new`
 - commented LLM examples: `openrouter`, `openai`, `local_openai`, `custom_llm`
 - commented search examples: `jina`, `tavily`, `exa`, `firecrawl`, `linkup`, `brave`, `serpapi`, `serper`, `perplexity`, `custom_search`
-- commented fetch examples: `jina`, `tavily`, `exa`, `firecrawl`, `linkup`, `custom_fetch`
+- commented fetch examples: `jina`, `tavily`, `exa`, `firecrawl`, `linkup`, `special_trafilatura`, `special_playwright`, `custom_fetch`
 
 Implement these functions in `nexi/config_template.py`:
 
@@ -65,7 +65,7 @@ Implement these functions in `nexi/config_template.py`:
 
 - `llm_backends = []`
 - `search_backends = []`
-- `fetch_backends = ["crawl4ai_local", "markdown_new"]`
+- `fetch_backends = ["crawl4ai_local", "special_trafilatura", "special_playwright", "markdown_new"]`
 - scalar defaults from `DEFAULT_CONFIG`
 - uncommented provider tables for every provider present in `active_config["providers"]`
 - commented example tables for inactive shipped provider examples
@@ -91,7 +91,7 @@ Open `nexi/config.py` and make these exact changes:
 4. Change `DEFAULT_CONFIG` so the runtime defaults match the new spec:
    - `llm_backends = []`
    - `search_backends = []`
-   - `fetch_backends = ["crawl4ai_local", "markdown_new"]`
+   - `fetch_backends = ["crawl4ai_local", "special_trafilatura", "special_playwright", "markdown_new"]`
    - keep scalar defaults unchanged
    - keep provider-specific default values only for active fetch providers and any metadata still needed for onboarding
 5. Rewrite `_normalize_config_data()` so it fills missing scalar defaults but does not inject inactive provider tables into parsed configs.
@@ -181,8 +181,8 @@ In `nexi/onboard.py`, implement `run_onboarding() -> None` with `questionary`.
    - `custom_llm`: prompt for `provider_name` and `provider_type`
 5. Ask the user to choose one search setup from `jina`, `tavily`, `exa`, `firecrawl`, `linkup`, `brave`, `serpapi`, `serper`, `perplexity`, or `custom_search`.
 6. Ask only for the fields required by the chosen search setup.
-7. Ask whether to keep the default fetch chain `["crawl4ai_local", "markdown_new"]`.
-8. If the user answers no to the previous question, show a checkbox with `crawl4ai_local`, `markdown_new`, `jina`, `tavily`, `exa`, `firecrawl`, `linkup`, and `custom_fetch`, then ask only for the required fields of any newly selected fetch providers.
+7. Ask whether to keep the default fetch chain `["crawl4ai_local", "special_trafilatura", "special_playwright", "markdown_new"]`.
+8. If the user answers no to the previous question, show a checkbox with `crawl4ai_local`, `special_trafilatura`, `special_playwright`, `markdown_new`, `jina`, `tavily`, `exa`, `firecrawl`, `linkup`, and `custom_fetch`, then ask only for the required fields of any newly selected fetch providers.
 9. Write the resulting config with `save_config()`.
 
 Do not ask about `default_effort`, `time_target`, compaction, retries, or other advanced settings.

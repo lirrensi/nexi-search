@@ -21,6 +21,10 @@ from nexi.backends.registry import (
 from nexi.backends.searxng import SearXNGSearchProvider
 from nexi.backends.serpapi import SerpAPISearchProvider
 from nexi.backends.serper import SerperSearchProvider
+from nexi.backends.special_fetch import (
+    SpecialPlaywrightFetchProvider,
+    SpecialTrafilaturaFetchProvider,
+)
 from nexi.backends.tavily import TavilyFetchProvider, TavilySearchProvider
 
 
@@ -118,6 +122,26 @@ def test_resolve_markdown_new_fetch_provider_success() -> None:
     )
 
     assert provider is MarkdownNewFetchProvider
+
+
+def test_resolve_special_trafilatura_fetch_provider_success() -> None:
+    """Special Trafilatura fetch provider resolves correctly."""
+    provider = resolve_fetch_provider(
+        "special_trafilatura",
+        {"special_trafilatura": {"type": "special_trafilatura"}},
+    )
+
+    assert provider is SpecialTrafilaturaFetchProvider
+
+
+def test_resolve_special_playwright_fetch_provider_success() -> None:
+    """Special Playwright fetch provider resolves correctly."""
+    provider = resolve_fetch_provider(
+        "special_playwright",
+        {"special_playwright": {"type": "special_playwright"}},
+    )
+
+    assert provider is SpecialPlaywrightFetchProvider
 
 
 def test_resolve_crawl4ai_fetch_provider_success() -> None:

@@ -1,5 +1,11 @@
 """Direct search CLI for NEXI backends."""
 
+# FILE: nexi/search_cli.py
+# PURPOSE: Run direct search requests with optional provider override support.
+# OWNS: Direct search CLI parsing, readiness checks, and result formatting.
+# EXPORTS: main
+# DOCS: agent_chat/plan_direct_provider_override_2026-04-24.md
+
 from __future__ import annotations
 
 import asyncio
@@ -11,6 +17,7 @@ import click
 from nexi.backends.orchestrators import run_search_chain
 from nexi.config import ConfigCreatedError, ensure_config, format_config_created_message
 from nexi.config_doctor import check_command_readiness
+from nexi.direct_provider import build_direct_provider_config
 
 
 def _all_searches_failed(payload: dict[str, Any]) -> bool:
@@ -58,8 +65,13 @@ def _format_search_payload(payload: dict[str, Any]) -> str:
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
 @click.argument("query")
 @click.option("--json", "json_output", is_flag=True, help="Print structured JSON output")
+@click.option(
+    "--provider",
+    default=None,
+    help="Use only the named provider instance and bypass the fallback chain",
+)
 @click.option("-v", "--verbose", is_flag=True, help="Show provider debug output")
-def main(query: str, json_output: bool, verbose: bool) -> None:
+def main(query: str, json_output: bool, provider: str | None, verbose: bool) -> None:
     """Run direct search using configured backend orchestration."""
     try:
         config = ensure_config()
@@ -68,9 +80,15 @@ def main(query: str, json_output: bool, verbose: bool) -> None:
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
 
-    readiness_errors = check_command_readiness(config, "nexi-search")
-    if readiness_errors:
-        raise click.ClickException("; ".join(readiness_errors))
+    if provider is None:
+        readiness_errors = check_command_readiness(config, "nexi-search")
+        if readiness_errors:
+            raise click.ClickException("; ".join(readiness_errors))
+    else:
+        try:
+            config = build_direct_provider_config(config, provider, "search")
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
 
     payload = asyncio.run(run_search_chain([query], config, verbose))
 
@@ -80,6 +98,8 @@ def main(query: str, json_output: bool, verbose: bool) -> None:
         click.echo(_format_search_payload(payload))
 
     if _all_searches_failed(payload):
+        if provider is not None:
+            raise click.ClickException(f"Provider '{provider}' failed")
         raise click.ClickException("All configured search providers failed")
 
 

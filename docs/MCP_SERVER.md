@@ -73,7 +73,7 @@ Run the direct fetch backend chain. This is the MCP counterpart to `nexi-fetch`.
 - `verbose` (optional): Show provider debug output
 
 **Returns:**
-Structured fetch payload matching `nexi-fetch --json`, including `pages` and `provider_failures`.
+Structured fetch payload matching `nexi-fetch --json`, including `pages`, `provider_failures`, and any `full_content_path` spillover markers for oversized pages.
 
 ## Example MCP Client Configuration
 

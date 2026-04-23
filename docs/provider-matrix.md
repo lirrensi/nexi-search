@@ -25,6 +25,8 @@ If a provider family is not listed here, it is not part of the product.
 | `openai_compatible` | LLM | `openrouter`, `openai`, `local_openai` | Commented example | `base_url`, `api_key`, `model` | Supported | Covers OpenRouter, OpenAI, local OpenAI-compatible servers, and similar APIs. |
 | `jina` | Search, Fetch | `jina` | Commented example | `api_key` | Supported | Search requires user activation; fetch is available but not zero-config. |
 | `searxng` | Search | `searxng` | Commented example | `base_url` | Supported | Self-hosted search backend; optional query scoping via `engines`, `categories`, `language`, and `safesearch`. |
+| `special_trafilatura` | Fetch | `special_trafilatura` | Active by default | none | Supported | Zero-config resilient fetch fallback: HTTPX + Trafilatura + best-effort text extraction. |
+| `special_playwright` | Fetch | `special_playwright` | Active by default | none | Supported | Headed Playwright fetch fallback that extracts rendered page text instead of raw HTML. |
 | `markdown_new` | Fetch | `markdown_new` | Active by default | none | Supported | Zero-key remote markdown fetch fallback. |
 | `crawl4ai` | Fetch | `crawl4ai_local` | Active by default | none | Supported | Local/runtime-backed fetch provider. Optional runtime dependency remains a user environment concern. |
 | `tavily` | Search, Fetch | `tavily` | Commented example | `api_key` | Supported | Source-first search and extraction provider family. |
@@ -64,7 +66,7 @@ These provider families are tracked intentionally, but they are not valid shippe
 
 The generated template SHOULD look like this at a high level:
 
-- `fetch_backends = ["crawl4ai_local", "markdown_new"]`
+- `fetch_backends = ["crawl4ai_local", "special_trafilatura", "special_playwright", "markdown_new"]`
 - `llm_backends = []` until the user activates one
 - `search_backends = []` until the user activates one
 - visible commented examples for common LLM and search providers
@@ -73,3 +75,9 @@ The generated template SHOULD look like this at a high level:
 
 - This file is the stable product-facing matrix.
 - Deeper research notes, API comparisons, or vendor scouting belong in planning documents, not in the canonical support matrix.
+
+## Direct Provider Overrides
+
+- `nexi-search --provider NAME` and `nexi-fetch --provider NAME` may target any Supported provider instance that matches the command capability.
+- The override bypasses the configured fallback chain and uses only the named provider instance.
+- If the named provider is missing or does not support the command capability, the CLI fails immediately.

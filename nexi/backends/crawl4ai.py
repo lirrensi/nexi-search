@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 import importlib
+from html import unescape
 from typing import Any
+
+import httpx
+from bs4 import BeautifulSoup
+
+from nexi.backends.http_client import get_http_client
 
 
 class Crawl4AIFetchProvider:
@@ -16,6 +22,10 @@ class Crawl4AIFetchProvider:
         browser_type = config.get("browser_type")
         if browser_type is not None and not isinstance(browser_type, str):
             raise ValueError("crawl4ai browser_type must be a string")
+
+        cdp_url = config.get("cdp_url")
+        if cdp_url is not None and not isinstance(cdp_url, str):
+            raise ValueError("crawl4ai cdp_url must be a string")
 
         headless = config.get("headless")
         if headless is not None and not isinstance(headless, bool):
@@ -45,9 +55,21 @@ class Crawl4AIFetchProvider:
                 try:
                     result = await crawler.arun(url=url, config=run_config)
                 except Exception as exc:
-                    pages.append({"url": url, "content": "", "error": str(exc)})
+                    fallback_page = await _fetch_via_http(url, timeout, verbose)
+                    pages.append(
+                        fallback_page
+                        if fallback_page.get("content")
+                        else {"url": url, "content": "", "error": str(exc)}
+                    )
                     continue
-                pages.append(_result_to_page(url, result))
+
+                page = _result_to_page(url, result)
+                if page.get("error"):
+                    fallback_page = await _fetch_via_http(url, timeout, verbose)
+                    pages.append(fallback_page if fallback_page.get("content") else page)
+                    continue
+
+                pages.append(page)
 
         return {"pages": pages}
 
@@ -72,6 +94,8 @@ def _build_browser_config(crawl4ai: Any, config: dict[str, Any]) -> Any:
     kwargs: dict[str, Any] = {}
     if isinstance(config.get("browser_type"), str) and config["browser_type"].strip():
         kwargs["browser_type"] = config["browser_type"]
+    if isinstance(config.get("cdp_url"), str) and config["cdp_url"].strip():
+        kwargs["cdp_url"] = config["cdp_url"].strip()
     if isinstance(config.get("headless"), bool):
         kwargs["headless"] = config["headless"]
 
@@ -118,6 +142,42 @@ def _result_to_page(url: str, result: Any) -> dict[str, Any]:
         return {"url": url, "content": "", "error": "No content returned"}
 
     return {"url": url, "content": content}
+
+
+async def _fetch_via_http(url: str, timeout: float, verbose: bool) -> dict[str, Any]:
+    """Fallback to direct HTTP fetch when browser crawling fails."""
+    client = get_http_client(timeout=timeout)
+
+    if verbose:
+        print(f"  [Crawl4AI HTTP Fallback] URL: {url}")
+
+    try:
+        response = await client.get(url, follow_redirects=True)
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        return {
+            "url": url,
+            "content": "",
+            "error": f"HTTP {exc.response.status_code}: {exc.response.text}",
+        }
+    except Exception as exc:
+        return {"url": url, "content": "", "error": str(exc)}
+
+    content = _html_to_text(response.text)
+    if not content.strip():
+        return {"url": url, "content": "", "error": "No content returned"}
+
+    return {"url": url, "content": content}
+
+
+def _html_to_text(html: str) -> str:
+    """Convert HTML to readable text."""
+    soup = BeautifulSoup(unescape(html), "html.parser")
+    for tag in soup(["script", "style", "noscript"]):
+        tag.decompose()
+
+    lines = [line.strip() for line in soup.get_text("\n").splitlines()]
+    return "\n".join(line for line in lines if line)
 
 
 __all__ = ["Crawl4AIFetchProvider"]

@@ -8,9 +8,9 @@ NEXI is not just another search wrapper with a cute prompt and one hardcoded bac
 
 ---
 
-## Version 2.0.1
+## Version 2.1.0
 
-NEXI 2.0.1 keeps the 2.0 cleanup release intact and sands down more of the rough edges.
+NEXI 2.1.0 keeps the 2.0 cleanup release intact and sands down more of the rough edges.
 
 - ✨ provider chains are now the core model, with ordered fallbacks across LLM, search, and fetch
 - 🧾 config is now TOML at `~/.config/nexi/config.toml`
@@ -105,6 +105,8 @@ Here is the practical short version of what NEXI supports today:
 
 - `markdown_new`
 - `crawl4ai`
+- `special_trafilatura`
+- `special_playwright`
 - `jina`
 - `tavily`
 - `exa`
@@ -203,11 +205,14 @@ Example shape:
 ```toml
 llm_backends = []
 search_backends = []
-fetch_backends = ["crawl4ai_local", "markdown_new"]
+fetch_backends = ["crawl4ai_local", "special_trafilatura", "special_playwright", "markdown_new"]
 
 default_effort = "m"
-max_output_tokens = 8192
-time_target = 600
+max_context = 128000
+provider_timeout = 30
+direct_fetch_max_tokens = 8000
+search_provider_retries = 2
+fetch_provider_retries = 2
 
 [providers.markdown_new]
 type = "markdown_new"
@@ -255,6 +260,7 @@ Use direct search when you want raw search-provider results without the agent lo
 ```bash
 nexi-search "rust async trait objects"
 nexi-search --json "rust async trait objects"
+nexi-search --provider jina "rust async trait objects"
 ```
 
 ### `nexi-fetch` 📄
@@ -265,6 +271,7 @@ Use direct fetch when you want page content or extraction without the full agent
 nexi-fetch "https://example.com/spec"
 nexi-fetch --json "https://example.com/spec"
 nexi-fetch --full "https://example.com/spec"
+nexi-fetch --provider special_trafilatura "https://example.com/spec"
 ```
 
 ---
@@ -290,9 +297,11 @@ nexi-fetch --full "https://example.com/spec"
 |---------|-------------|
 | `nexi-search "query"` | Run direct search without the agent loop |
 | `nexi-search --json "query"` | Return structured search output |
+| `nexi-search --provider NAME "query"` | Use only one search provider instance |
 | `nexi-fetch "url"` | Run direct fetch or extraction |
 | `nexi-fetch --json "url"` | Return structured fetch output |
 | `nexi-fetch --full "url"` | Return full fetched content |
+| `nexi-fetch --provider NAME "url"` | Use only one fetch provider instance |
 
 ### Config Lifecycle 🧾
 

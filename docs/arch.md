@@ -199,6 +199,7 @@ class Config:
     preserve_last_n_messages: int        # Recent messages to keep un-compacted
     tokenizer_encoding: str              # tiktoken encoding name
     provider_timeout: int                # Default timeout for provider API calls
+    direct_fetch_max_tokens: int         # Max emitted tokens per page for direct fetch
     search_provider_retries: int         # Retries per search provider before failover
     fetch_provider_retries: int          # Retries per fetch provider before failover
 ```
@@ -478,6 +479,7 @@ class LLMProvider(Provider, Protocol):
 
 - `nexi-search` calls the search orchestrator directly and prints either plain text or JSON
 - `nexi-fetch` calls the fetch orchestrator directly and prints either extracted text or JSON
+- Direct fetch output is capped per page and spills oversized full content to temp files with absolute paths
 - Direct commands do not create citations/history unless explicitly requested by their own contract in a future revision
 - Direct commands MUST exit non-zero if every configured provider fails for every requested item
 
@@ -510,11 +512,17 @@ Raw page content returned by a fetch provider is processed in three modes:
 3. Process raw content in one of the three `web_get` modes below
 4. Store successful raw content in cache
 
+Direct fetch surfaces apply an additional post-processing step after `web_get`:
+- cap each emitted page at `config.direct_fetch_max_tokens` (default: 8000)
+- spill the full page content to a temp file when truncation occurs
+- append the absolute spillover path to the page payload as `full_content_path`
+
 #### web_get Processing Modes
 
 **1. Full Content (`get_full=True`)**:
 - Return raw markdown from the active fetch provider
 - No LLM processing
+- Direct fetch surfaces still cap emitted output after this step
 
 **2. Chunk-Based Selection (`use_chunks=True`)**:
 - Split content into logical chunks via `create_logical_chunks()`
@@ -542,7 +550,8 @@ def create_logical_chunks(md: str, target_chars: int = 480, max_chars: int = 720
     "pages": [
         {
             "url": "https://example.com",
-            "content": "[1] https://example.com\n---\nExtracted content"
+            "content": "[1] https://example.com\n---\nExtracted content",
+            "full_content_path": "/tmp/nexi-fetch-abc.txt"  # optional, direct fetch only
         }
     ]
 }
@@ -1214,7 +1223,7 @@ Example configuration:
 ```toml
 llm_backends = ["openrouter"]
 search_backends = ["searxng"]
-fetch_backends = ["crawl4ai_local", "markdown_new"]
+fetch_backends = ["crawl4ai_local", "special_trafilatura", "special_playwright", "markdown_new"]
 
 [providers.openrouter]
 type = "openai_compatible"

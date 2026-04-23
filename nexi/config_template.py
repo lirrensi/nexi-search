@@ -9,7 +9,12 @@ from typing import Any
 DEFAULT_CHAIN_CONFIG: dict[str, list[str]] = {
     "llm_backends": [],
     "search_backends": [],
-    "fetch_backends": ["crawl4ai_local", "markdown_new"],
+    "fetch_backends": [
+        "crawl4ai_local",
+        "special_trafilatura",
+        "special_playwright",
+        "markdown_new",
+    ],
 }
 
 DEFAULT_SCALAR_CONFIG: dict[str, Any] = {
@@ -20,6 +25,7 @@ DEFAULT_SCALAR_CONFIG: dict[str, Any] = {
     "preserve_last_n_messages": 3,
     "tokenizer_encoding": "cl100k_base",
     "provider_timeout": 30,
+    "direct_fetch_max_tokens": 8000,
     "search_provider_retries": 2,
     "fetch_provider_retries": 2,
 }
@@ -28,6 +34,13 @@ ACTIVE_FETCH_PROVIDER_DEFAULTS: dict[str, dict[str, Any]] = {
     "crawl4ai_local": {
         "type": "crawl4ai",
         "headless": True,
+        "cdp_url": "http://localhost:9222",
+    },
+    "special_trafilatura": {
+        "type": "special_trafilatura",
+    },
+    "special_playwright": {
+        "type": "special_playwright",
     },
     "markdown_new": {
         "type": "markdown_new",
@@ -122,6 +135,12 @@ PROVIDER_EXAMPLES: dict[str, dict[str, Any]] = {
     "custom_fetch": {
         "type": "provider-custom_fetch",
     },
+    "special_trafilatura": {
+        "type": "special_trafilatura",
+    },
+    "special_playwright": {
+        "type": "special_playwright",
+    },
 }
 
 LLM_EXAMPLE_ORDER = ["openrouter", "openai", "local_openai", "custom_llm"]
@@ -145,6 +164,8 @@ FETCH_EXAMPLE_ORDER = [
     "exa",
     "firecrawl",
     "linkup",
+    "special_trafilatura",
+    "special_playwright",
     "custom_fetch",
 ]
 
@@ -172,6 +193,7 @@ def render_config_toml(active_config: dict[str, Any] | None = None) -> str:
         "preserve_last_n_messages",
         "tokenizer_encoding",
         "provider_timeout",
+        "direct_fetch_max_tokens",
         "search_provider_retries",
         "fetch_provider_retries",
     ]

@@ -25,7 +25,12 @@ def _build_config() -> Config:
     return Config(
         llm_backends=["openrouter"],
         search_backends=["jina"],
-        fetch_backends=["crawl4ai_local", "markdown_new"],
+        fetch_backends=[
+            "crawl4ai_local",
+            "special_trafilatura",
+            "special_playwright",
+            "markdown_new",
+        ],
         providers={
             "openrouter": {
                 "type": "openai_compatible",
@@ -41,6 +46,12 @@ def _build_config() -> Config:
                 "type": "crawl4ai",
                 "headless": True,
             },
+            "special_trafilatura": {
+                "type": "special_trafilatura",
+            },
+            "special_playwright": {
+                "type": "special_playwright",
+            },
             "markdown_new": {
                 "type": "markdown_new",
                 "method": "auto",
@@ -54,6 +65,7 @@ def _build_config() -> Config:
         preserve_last_n_messages=3,
         tokenizer_encoding="cl100k_base",
         provider_timeout=30,
+        direct_fetch_max_tokens=8000,
         search_provider_retries=2,
         fetch_provider_retries=2,
     )
@@ -83,8 +95,13 @@ def test_write_default_template_writes_config_toml(tmp_path: Path) -> None:
     assert config_path.exists()
     text = config_path.read_text(encoding="utf-8")
     assert "llm_backends = []" in text
-    assert 'fetch_backends = ["crawl4ai_local", "markdown_new"]' in text
+    assert (
+        'fetch_backends = ["crawl4ai_local", "special_trafilatura", "special_playwright", "markdown_new"]'
+        in text
+    )
     assert "[providers.markdown_new]" in text
+    assert "[providers.special_trafilatura]" in text
+    assert "[providers.special_playwright]" in text
     assert "# [providers.openrouter]" in text
     assert text.count("# [providers.jina]") == 1
     assert text.count("# [providers.searxng]") == 1
@@ -127,7 +144,12 @@ def test_build_doctor_report_accepts_searxng_search_provider() -> None:
     config = Config(
         llm_backends=["openrouter"],
         search_backends=["searxng"],
-        fetch_backends=["crawl4ai_local", "markdown_new"],
+        fetch_backends=[
+            "crawl4ai_local",
+            "special_trafilatura",
+            "special_playwright",
+            "markdown_new",
+        ],
         providers={
             "openrouter": {
                 "type": "openai_compatible",
@@ -142,6 +164,12 @@ def test_build_doctor_report_accepts_searxng_search_provider() -> None:
             "crawl4ai_local": {
                 "type": "crawl4ai",
                 "headless": True,
+            },
+            "special_trafilatura": {
+                "type": "special_trafilatura",
+            },
+            "special_playwright": {
+                "type": "special_playwright",
             },
             "markdown_new": {
                 "type": "markdown_new",
@@ -165,7 +193,7 @@ def test_load_config_parses_toml(tmp_path: Path, monkeypatch) -> None:
         """
 llm_backends = ["openrouter"]
 search_backends = ["jina"]
-fetch_backends = ["crawl4ai_local", "markdown_new"]
+fetch_backends = ["crawl4ai_local", "special_trafilatura", "special_playwright", "markdown_new"]
 
 default_effort = "m"
 max_context = 128000
@@ -174,6 +202,7 @@ compact_target_words = 5000
 preserve_last_n_messages = 3
 tokenizer_encoding = "cl100k_base"
 provider_timeout = 30
+direct_fetch_max_tokens = 8000
 search_provider_retries = 2
 fetch_provider_retries = 2
 
@@ -191,6 +220,12 @@ api_key = "test-jina"
 type = "crawl4ai"
 headless = true
 
+[providers.special_trafilatura]
+type = "special_trafilatura"
+
+[providers.special_playwright]
+type = "special_playwright"
+
 [providers.markdown_new]
 type = "markdown_new"
 method = "auto"
@@ -203,9 +238,15 @@ retain_images = false
 
     assert loaded.llm_backends == ["openrouter"]
     assert loaded.search_backends == ["jina"]
-    assert loaded.fetch_backends == ["crawl4ai_local", "markdown_new"]
+    assert loaded.fetch_backends == [
+        "crawl4ai_local",
+        "special_trafilatura",
+        "special_playwright",
+        "markdown_new",
+    ]
     assert loaded.providers["openrouter"]["type"] == "openai_compatible"
     assert loaded.provider_timeout == 30
+    assert loaded.direct_fetch_max_tokens == 8000
 
 
 def test_load_config_adds_hint_for_duplicate_provider_tables(tmp_path: Path, monkeypatch) -> None:

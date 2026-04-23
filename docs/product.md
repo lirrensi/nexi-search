@@ -207,23 +207,29 @@ nexi --prev
 
 ```bash
 nexi-search "rust async trait objects"
+nexi-search --provider jina "rust async trait objects"
 ```
 
 1. User or agent calls the direct search binary
-2. NEXI executes the configured search backend chain
-3. Failed queries retry within the active provider, then fall through to the next provider
-4. Plain text or JSON results are written to stdout
+2. By default, NEXI executes the configured search backend chain
+3. `--provider NAME` narrows execution to one named provider and bypasses the fallback chain
+4. Failed queries retry within the active provider, then fall through to the next provider unless overridden
+5. Plain text or JSON results are written to stdout
 
 ### Flow 10: Direct Fetch Tool
 
 ```bash
 nexi-fetch "https://example.com/spec"
+nexi-fetch --provider special_trafilatura "https://example.com/spec"
 ```
 
 1. User or agent calls the direct fetch binary
-2. NEXI executes the configured fetch backend chain
-3. Failed URLs retry within the active provider, then fall through to the next provider
-4. Extracted content is written to stdout and can be piped to files or other tools
+2. By default, NEXI executes the configured fetch backend chain
+3. `--provider NAME` narrows execution to one named provider and bypasses the fallback chain
+4. Failed URLs retry within the active provider, then fall through to the next provider unless overridden
+5. Direct fetch output is capped at 8000 tokens per page outside agent mode
+6. Oversized pages spill the full content to a temp file and print the absolute path alongside the truncated output
+7. Extracted content is written to stdout and can be piped to files or other tools
 
 ---
 
@@ -246,8 +252,10 @@ nexi-fetch "https://example.com/spec"
 |---------|-------------|
 | `nexi-search "query"` | Run direct search without the agentic loop |
 | `nexi-search --json "query"` | Return structured search results for scripts/agents |
+| `nexi-search --provider NAME "query"` | Run one named search provider only |
 | `nexi-fetch "url"` | Fetch/extract content from one or more URLs |
 | `nexi-fetch --json "url"` | Return structured fetch results for scripts/agents |
+| `nexi-fetch --provider NAME "url"` | Run one named fetch provider only |
 
 ### MCP Tools
 
@@ -370,6 +378,7 @@ The search loop **MUST** terminate when **any** of these conditions are met:
 | `preserve_last_n_messages` | `3` | Recent messages to keep un-compacted |
 | `tokenizer_encoding` | `cl100k_base` | tiktoken encoding name |
 | `provider_timeout` | `30` | Default timeout for provider API calls |
+| `direct_fetch_max_tokens` | `8000` | Max emitted tokens per page for direct fetch output |
 | `search_provider_retries` | `2` | Retry attempts per search provider before failover |
 | `fetch_provider_retries` | `2` | Retry attempts per fetch provider before failover |
 
@@ -379,7 +388,7 @@ The search loop **MUST** terminate when **any** of these conditions are met:
 # Activate at least one LLM and one search provider before running `nexi`.
 llm_backends = []
 search_backends = []
-fetch_backends = ["crawl4ai_local", "markdown_new"]
+fetch_backends = ["crawl4ai_local", "special_trafilatura", "special_playwright", "markdown_new"]
 
 default_effort = "m"
 max_context = 128000
@@ -388,6 +397,7 @@ compact_target_words = 5000
 preserve_last_n_messages = 3
 tokenizer_encoding = "cl100k_base"
 provider_timeout = 30
+direct_fetch_max_tokens = 8000
 search_provider_retries = 2
 fetch_provider_retries = 2
 
