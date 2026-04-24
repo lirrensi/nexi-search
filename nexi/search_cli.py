@@ -18,6 +18,7 @@ from nexi.backends.orchestrators import run_search_chain
 from nexi.config import ConfigCreatedError, ensure_config, format_config_created_message
 from nexi.config_doctor import check_command_readiness
 from nexi.direct_provider import build_direct_provider_config
+from nexi.runtime_noise import configure_runtime_noise, suppress_runtime_chatter
 
 
 def _all_searches_failed(payload: dict[str, Any]) -> bool:
@@ -73,6 +74,7 @@ def _format_search_payload(payload: dict[str, Any]) -> str:
 @click.option("-v", "--verbose", is_flag=True, help="Show provider debug output")
 def main(query: str, json_output: bool, provider: str | None, verbose: bool) -> None:
     """Run direct search using configured backend orchestration."""
+    configure_runtime_noise(verbose)
     try:
         config = ensure_config()
     except ConfigCreatedError as exc:
@@ -90,7 +92,8 @@ def main(query: str, json_output: bool, provider: str | None, verbose: bool) -> 
         except ValueError as exc:
             raise click.ClickException(str(exc)) from exc
 
-    payload = asyncio.run(run_search_chain([query], config, verbose))
+    with suppress_runtime_chatter(verbose):
+        payload = asyncio.run(run_search_chain([query], config, verbose))
 
     if json_output:
         click.echo(json.dumps(payload, indent=2, ensure_ascii=False))

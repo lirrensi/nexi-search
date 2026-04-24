@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import html
+import os
 from html.parser import HTMLParser
 from typing import Any
 
@@ -59,6 +60,8 @@ class SpecialPlaywrightFetchProvider:
     ) -> dict[str, Any]:
         """Fetch content using headed Playwright and rendered text extraction."""
         async_playwright = _import_async_playwright()
+        if not verbose:
+            os.environ.setdefault("NODE_NO_WARNINGS", "1")
         pages = []
 
         async with async_playwright() as playwright:

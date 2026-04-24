@@ -69,7 +69,7 @@ The generated template SHOULD look like this at a high level:
 - `fetch_backends = ["special_trafilatura", "special_playwright", "markdown_new"]`
 - `llm_backends = []` until the user activates one
 - `search_backends = []` until the user activates one
-- visible commented examples for common LLM/search providers and `crawl4ai_local`
+- visible commented examples for common LLM/search providers and the `crawl4ai_local` opt-in example
 
 ## Notes On Discovery And Planning
 

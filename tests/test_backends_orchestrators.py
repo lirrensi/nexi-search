@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import sys
 from types import SimpleNamespace
 from typing import Any
 
@@ -314,6 +315,84 @@ async def test_run_fetch_chain_partial_failover(monkeypatch) -> None:
     assert payload["pages"][0]["content"] == "content for https://ok.example"
     assert payload["pages"][1]["content"] == "fallback for https://retry.example"
     assert payload["provider_failures"][0]["provider"] == "primary_fetch"
+
+
+@pytest.mark.asyncio
+async def test_run_fetch_chain_suppresses_provider_chatter_when_quiet(
+    monkeypatch,
+    capsys,
+) -> None:
+    """Quiet fetch runs suppress provider stdout/stderr chatter."""
+
+    class NoisyFetchProvider:
+        name = "primary_fetch"
+
+        def validate_config(self, config: dict[str, Any]) -> None:
+            return None
+
+        async def fetch(
+            self,
+            urls: list[str],
+            config: dict[str, Any],
+            timeout: float,
+            verbose: bool,
+        ) -> dict[str, Any]:
+            print("provider-stdout")
+            print("provider-stderr", file=sys.stderr)
+            return {"pages": [{"url": url, "content": "quiet content"} for url in urls]}
+
+    monkeypatch.setattr(
+        "nexi.backends.orchestrators.resolve_fetch_provider",
+        lambda provider_name, providers: NoisyFetchProvider,
+    )
+
+    config = _build_config(fetch_backends=["primary_fetch"])
+    payload = await run_fetch_chain(["https://example.com"], config, verbose=False)
+
+    captured = capsys.readouterr()
+
+    assert payload["pages"][0]["content"] == "quiet content"
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+@pytest.mark.asyncio
+async def test_run_fetch_chain_keeps_provider_chatter_when_verbose(
+    monkeypatch,
+    capsys,
+) -> None:
+    """Verbose fetch runs keep provider chatter visible for debugging."""
+
+    class NoisyFetchProvider:
+        name = "primary_fetch"
+
+        def validate_config(self, config: dict[str, Any]) -> None:
+            return None
+
+        async def fetch(
+            self,
+            urls: list[str],
+            config: dict[str, Any],
+            timeout: float,
+            verbose: bool,
+        ) -> dict[str, Any]:
+            print("provider-stdout")
+            print("provider-stderr", file=sys.stderr)
+            return {"pages": [{"url": url, "content": "loud content"} for url in urls]}
+
+    monkeypatch.setattr(
+        "nexi.backends.orchestrators.resolve_fetch_provider",
+        lambda provider_name, providers: NoisyFetchProvider,
+    )
+
+    config = _build_config(fetch_backends=["primary_fetch"])
+    payload = await run_fetch_chain(["https://example.com"], config, verbose=True)
+
+    captured = capsys.readouterr()
+
+    assert payload["pages"][0]["content"] == "loud content"
+    assert "provider-stdout" in captured.out
+    assert "provider-stderr" in captured.err
 
 
 @pytest.mark.asyncio

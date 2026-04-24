@@ -48,6 +48,7 @@ from nexi.output import (
     print_warning,
     set_plain_mode,
 )
+from nexi.runtime_noise import configure_runtime_noise, suppress_runtime_chatter
 from nexi.search import run_search_sync
 
 
@@ -134,6 +135,8 @@ def main(
     if plain or not is_tty():
         set_plain_mode(True)
 
+    configure_runtime_noise(verbose)
+
     if ctx.invoked_subcommand is not None:
         return
 
@@ -163,12 +166,13 @@ def main(
         _interactive_mode()
         return
 
-    _run_search_command(
-        query=search_query,
-        effort=effort,
-        verbose=verbose,
-        plain=plain,
-    )
+    with suppress_runtime_chatter(verbose):
+        _run_search_command(
+            query=search_query,
+            effort=effort,
+            verbose=verbose,
+            plain=plain,
+        )
 
 
 @main.command("config")

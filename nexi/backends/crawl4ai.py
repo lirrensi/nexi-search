@@ -160,6 +160,7 @@ def _crawl4ai_noise_suppressed(verbose: bool):
         yield
         return
 
+    os.environ.setdefault("NODE_NO_WARNINGS", "1")
     previous_disable_level = logging.root.manager.disable
     try:
         logging.disable(logging.CRITICAL)

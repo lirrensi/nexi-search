@@ -18,6 +18,7 @@ from nexi.config import ConfigCreatedError, ensure_config, format_config_created
 from nexi.config_doctor import check_command_readiness
 from nexi.direct_fetch import post_process_direct_fetch_payload
 from nexi.direct_provider import build_direct_provider_config
+from nexi.runtime_noise import configure_runtime_noise, suppress_runtime_chatter
 from nexi.tools import web_get
 
 
@@ -66,6 +67,7 @@ def main(
     verbose: bool,
 ) -> None:
     """Run direct fetch/extraction using configured backend orchestration."""
+    configure_runtime_noise(verbose)
     try:
         config = ensure_config()
     except ConfigCreatedError as exc:
@@ -83,16 +85,17 @@ def main(
         except ValueError as exc:
             raise click.ClickException(str(exc)) from exc
 
-    payload = asyncio.run(
-        web_get(
-            urls=list(urls),
-            config=config,
-            verbose=verbose,
-            instructions=instructions,
-            get_full=full,
-            use_chunks=chunks,
+    with suppress_runtime_chatter(verbose):
+        payload = asyncio.run(
+            web_get(
+                urls=list(urls),
+                config=config,
+                verbose=verbose,
+                instructions=instructions,
+                get_full=full,
+                use_chunks=chunks,
+            )
         )
-    )
     payload = post_process_direct_fetch_payload(
         payload,
         max_tokens=config.direct_fetch_max_tokens,

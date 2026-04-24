@@ -9,6 +9,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import io
 from typing import Any
 
 from nexi.backends.registry import (
@@ -75,6 +77,19 @@ def _summarize_item_errors(
     return "; ".join(errors) if errors else fallback
 
 
+@contextlib.contextmanager
+def _quiet_provider_io(verbose: bool):
+    """Silence provider stdout/stderr unless verbose mode is enabled."""
+    if verbose:
+        yield
+        return
+
+    stdout_buffer = io.StringIO()
+    stderr_buffer = io.StringIO()
+    with contextlib.redirect_stdout(stdout_buffer), contextlib.redirect_stderr(stderr_buffer):
+        yield
+
+
 def _search_item_failure_kind(item: dict[str, Any]) -> str | None:
     """Classify a search item failure."""
     if item.get("error"):
@@ -138,12 +153,13 @@ async def run_search_chain(
         for attempt in range(1, max_attempts + 1):
             attempts_made = attempt
             try:
-                payload = await provider.search(
-                    retry_queries,
-                    config.providers[provider_name],
-                    float(config.provider_timeout),
-                    verbose,
-                )
+                with _quiet_provider_io(verbose):
+                    payload = await provider.search(
+                        retry_queries,
+                        config.providers[provider_name],
+                        float(config.provider_timeout),
+                        verbose,
+                    )
             except Exception as exc:
                 final_error = str(exc)
                 if attempt < max_attempts:
@@ -305,12 +321,13 @@ async def run_fetch_chain(
         for attempt in range(1, max_attempts + 1):
             attempts_made = attempt
             try:
-                payload = await provider.fetch(
-                    remaining_urls,
-                    config.providers[provider_name],
-                    float(config.provider_timeout),
-                    verbose,
-                )
+                with _quiet_provider_io(verbose):
+                    payload = await provider.fetch(
+                        remaining_urls,
+                        config.providers[provider_name],
+                        float(config.provider_timeout),
+                        verbose,
+                    )
             except Exception as exc:
                 final_error = str(exc)
                 if attempt < max_attempts:
@@ -429,13 +446,14 @@ async def run_llm_chain(
             continue
 
         try:
-            return await provider.complete(
-                messages=messages,
-                tools=tools,
-                config=config.providers[provider_name],
-                verbose=verbose,
-                max_tokens=max_tokens,
-            )
+            with _quiet_provider_io(verbose):
+                return await provider.complete(
+                    messages=messages,
+                    tools=tools,
+                    config=config.providers[provider_name],
+                    verbose=verbose,
+                    max_tokens=max_tokens,
+                )
         except Exception as exc:
             provider_failures.append(
                 _provider_failure(
