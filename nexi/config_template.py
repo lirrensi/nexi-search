@@ -1,5 +1,10 @@
 """TOML config template rendering for NEXI."""
 
+# FILE: nexi/config_template.py
+# PURPOSE: Render the default TOML config template and bundled provider examples.
+# OWNS: Bootstrap template shape, default chains, and commented provider examples.
+# DOCS: docs/product.md, docs/arch.md, docs/provider-matrix.md, agent_chat/plan_crawl4ai_opt_in_2026-04-24.md
+
 from __future__ import annotations
 
 from copy import deepcopy
@@ -10,7 +15,6 @@ DEFAULT_CHAIN_CONFIG: dict[str, list[str]] = {
     "llm_backends": [],
     "search_backends": [],
     "fetch_backends": [
-        "crawl4ai_local",
         "special_trafilatura",
         "special_playwright",
         "markdown_new",
@@ -31,11 +35,6 @@ DEFAULT_SCALAR_CONFIG: dict[str, Any] = {
 }
 
 ACTIVE_FETCH_PROVIDER_DEFAULTS: dict[str, dict[str, Any]] = {
-    "crawl4ai_local": {
-        "type": "crawl4ai",
-        "headless": True,
-        "cdp_url": "http://localhost:9222",
-    },
     "special_trafilatura": {
         "type": "special_trafilatura",
     },
@@ -135,6 +134,11 @@ PROVIDER_EXAMPLES: dict[str, dict[str, Any]] = {
     "custom_fetch": {
         "type": "provider-custom_fetch",
     },
+    "crawl4ai_local": {
+        "type": "crawl4ai",
+        "headless": True,
+        "cdp_url": "http://localhost:9222",
+    },
     "special_trafilatura": {
         "type": "special_trafilatura",
     },
@@ -164,6 +168,7 @@ FETCH_EXAMPLE_ORDER = [
     "exa",
     "firecrawl",
     "linkup",
+    "crawl4ai_local",
     "special_trafilatura",
     "special_playwright",
     "custom_fetch",
@@ -175,7 +180,7 @@ def render_config_toml(active_config: dict[str, Any] | None = None) -> str:
     config = _build_render_config(active_config)
     lines = [
         "# Activate at least one LLM provider and one search provider before running `nexi`.",
-        "# The default fetch chain is ready to use as-is.",
+        "# The default fetch chain uses the quiet providers only.",
         "# Provider instances are shared across chains.",
         "# Define each [providers.<name>] table only once, then reuse that name in search_backends and fetch_backends.",
         '# If you need different settings for search and fetch, use different names like "jina_search" and "jina_fetch".',

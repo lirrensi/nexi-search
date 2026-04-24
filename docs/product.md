@@ -25,7 +25,7 @@ NEXI is an intelligent research CLI built around an agentic search loop powered 
 - **Multi-Query Parallel Search** — Execute 1-5 search queries in parallel for efficiency
 - **Intelligent Content Extraction** — Three modes: full content, chunk-based selection, or LLM summarization
 - **Pluggable Provider Chains** — Search, fetch, and LLM backends are interchangeable and ordered by preference
-- **Automatic Failover** — Hard provider failures fall through to the next configured backend without aborting the workflow
+- **Automatic Failover** — Hard provider failures and empty search responses fall through to the next configured backend without aborting the workflow
 - **Automatic Context Management** — Prevents token overflow via intelligent conversation compaction
 - **Citation System** — Automatic source attribution with stable numbering throughout search
 - **Multi-Turn Conversations** — Interactive REPL mode with conversation history
@@ -140,7 +140,8 @@ nexi onboard
 2. NEXI runs a small wizard focused on the basics
 3. Wizard helps activate one LLM provider and one search provider
 4. Existing zero-config fetch defaults stay enabled unless the user changes them
-5. Advanced settings remain in the file for manual editing
+5. Crawl4AI remains available as an opt-in example, not a default activation
+6. Advanced settings remain in the file for manual editing
 
 ### Flow 4: Deep Research
 
@@ -213,7 +214,7 @@ nexi-search --provider jina "rust async trait objects"
 1. User or agent calls the direct search binary
 2. By default, NEXI executes the configured search backend chain
 3. `--provider NAME` narrows execution to one named provider and bypasses the fallback chain
-4. Failed queries retry within the active provider, then fall through to the next provider unless overridden
+4. Failed queries retry within the active provider, and empty-result queries fall through to the next provider immediately unless overridden
 5. Plain text or JSON results are written to stdout
 
 ### Flow 10: Direct Fetch Tool
@@ -384,11 +385,13 @@ The search loop **MUST** terminate when **any** of these conditions are met:
 
 ### Default Template Shape
 
+The Crawl4AI-backed fetch provider remains supported as an opt-in example while the generated default template keeps the quiet zero-config fetch providers active.
+
 ```toml
 # Activate at least one LLM and one search provider before running `nexi`.
 llm_backends = []
 search_backends = []
-fetch_backends = ["crawl4ai_local", "special_trafilatura", "special_playwright", "markdown_new"]
+fetch_backends = ["special_trafilatura", "special_playwright", "markdown_new"]
 
 default_effort = "m"
 max_context = 128000
@@ -401,14 +404,20 @@ direct_fetch_max_tokens = 8000
 search_provider_retries = 2
 fetch_provider_retries = 2
 
+[providers.special_trafilatura]
+type = "special_trafilatura"
+
+[providers.special_playwright]
+type = "special_playwright"
+
 [providers.markdown_new]
 type = "markdown_new"
 method = "auto"
 retain_images = false
 
-[providers.crawl4ai_local]
-type = "crawl4ai"
-headless = true
+# [providers.crawl4ai_local]
+# type = "crawl4ai"
+# headless = true
 
 # Uncomment one LLM provider to activate it.
 # llm_backends = ["openrouter"]

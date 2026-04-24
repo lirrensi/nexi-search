@@ -1,5 +1,11 @@
 """Tests for backend orchestration behavior."""
 
+# FILE: tests/test_backends_orchestrators.py
+# PURPOSE: Verify provider-chain failover, retry, and failure metadata.
+# OWNS: Orchestrator behavior tests for search, fetch, and LLM provider chains.
+# EXPORTS: none
+# DOCS: docs/arch.md; agent_chat/plan_search_empty_failover_2026-04-24.md
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -127,6 +133,119 @@ async def test_run_search_chain_partial_failover(monkeypatch) -> None:
     assert payload["searches"][1]["results"][0]["url"] == "https://q2.fallback"
     assert payload["provider_failures"][0]["provider"] == "primary_search"
     assert payload["provider_failures"][0]["failed_items"] == ["q2"]
+    assert payload["provider_failures"][0]["failure_kind"] == "provider_error"
+
+
+@pytest.mark.asyncio
+async def test_run_search_chain_empty_result_failover(monkeypatch) -> None:
+    """Empty search responses move to the next provider without dropping successes."""
+    calls: list[tuple[str, list[str]]] = []
+
+    class PrimarySearchProvider:
+        name = "primary_search"
+
+        def validate_config(self, config: dict[str, Any]) -> None:
+            return None
+
+        async def search(
+            self,
+            queries: list[str],
+            config: dict[str, Any],
+            timeout: float,
+            verbose: bool,
+        ) -> dict[str, Any]:
+            calls.append((self.name, queries.copy()))
+            return {
+                "searches": [
+                    {
+                        "query": query,
+                        "results": [{"title": f"{query} title", "url": f"https://{query}.example"}],
+                    }
+                    if query == "q1"
+                    else {"query": query, "results": []}
+                    for query in queries
+                ]
+            }
+
+    class SecondarySearchProvider:
+        name = "secondary_search"
+
+        def validate_config(self, config: dict[str, Any]) -> None:
+            return None
+
+        async def search(
+            self,
+            queries: list[str],
+            config: dict[str, Any],
+            timeout: float,
+            verbose: bool,
+        ) -> dict[str, Any]:
+            calls.append((self.name, queries.copy()))
+            return {
+                "searches": [
+                    {
+                        "query": query,
+                        "results": [
+                            {"title": f"{query} recovered", "url": f"https://{query}.fallback"}
+                        ],
+                    }
+                    for query in queries
+                ]
+            }
+
+    monkeypatch.setattr(
+        "nexi.backends.orchestrators.resolve_search_provider",
+        lambda provider_name, providers: {
+            "primary_search": PrimarySearchProvider,
+            "secondary_search": SecondarySearchProvider,
+        }[provider_name],
+    )
+
+    payload = await run_search_chain(["q1", "q2"], _build_config(), verbose=False)
+
+    assert calls == [
+        ("primary_search", ["q1", "q2"]),
+        ("secondary_search", ["q2"]),
+    ]
+    assert payload["searches"][0]["results"][0]["url"] == "https://q1.example"
+    assert payload["searches"][1]["results"][0]["url"] == "https://q2.fallback"
+    assert payload["provider_failures"][0]["provider"] == "primary_search"
+    assert payload["provider_failures"][0]["failed_items"] == ["q2"]
+    assert payload["provider_failures"][0]["failure_kind"] == "empty_results"
+
+
+@pytest.mark.asyncio
+async def test_run_search_chain_all_empty_results_return_clear_error(monkeypatch) -> None:
+    """All-empty provider chains end with a clear no-results error."""
+
+    class EmptySearchProvider:
+        def validate_config(self, config: dict[str, Any]) -> None:
+            return None
+
+        async def search(
+            self,
+            queries: list[str],
+            config: dict[str, Any],
+            timeout: float,
+            verbose: bool,
+        ) -> dict[str, Any]:
+            return {"searches": [{"query": query, "results": []} for query in queries]}
+
+    monkeypatch.setattr(
+        "nexi.backends.orchestrators.resolve_search_provider",
+        lambda provider_name, providers: EmptySearchProvider,
+    )
+
+    payload = await run_search_chain(["q1"], _build_config(), verbose=False)
+
+    assert payload["searches"][0]["results"] == []
+    assert payload["searches"][0]["error"] == "No results found across configured search providers"
+    assert [item["failure_kind"] for item in payload["provider_failures"]] == [
+        "empty_results",
+        "empty_results",
+    ]
+    assert payload["provider_failures"][0]["failed_items"] == ["q1"]
+    assert payload["provider_failures"][1]["failed_items"] == ["q1"]
 
 
 @pytest.mark.asyncio
@@ -289,6 +408,7 @@ async def test_provider_config_validation_failure(monkeypatch) -> None:
     assert payload["searches"][0]["error"] == "All configured search providers failed"
     assert payload["provider_failures"][0]["stage"] == "validate"
     assert payload["provider_failures"][0]["error"] == "missing api_key"
+    assert payload["provider_failures"][0]["failure_kind"] == "validation_error"
 
 
 @pytest.mark.asyncio

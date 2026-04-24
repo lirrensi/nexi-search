@@ -1,5 +1,10 @@
 """Interactive onboarding for NEXI config activation."""
 
+# FILE: nexi/onboard.py
+# PURPOSE: Guide users through optional provider activation for a usable NEXI config.
+# OWNS: Prompt flow for selecting LLM, search, and fetch providers.
+# DOCS: docs/product.md, docs/arch.md, docs/provider-matrix.md, agent_chat/plan_crawl4ai_opt_in_2026-04-24.md
+
 from __future__ import annotations
 
 from copy import deepcopy
@@ -70,7 +75,7 @@ def run_onboarding() -> None:
         return
 
     keep_default_fetch = questionary.confirm(
-        "Keep the default fetch chain [crawl4ai_local, special_trafilatura, special_playwright, markdown_new]?",
+        "Keep the default fetch chain [special_trafilatura, special_playwright, markdown_new]?",
         default=True,
     ).ask()
     if keep_default_fetch is None:

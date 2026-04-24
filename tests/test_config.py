@@ -1,5 +1,10 @@
 """Unit tests for config bootstrap and TOML serialization."""
 
+# FILE: tests/test_config.py
+# PURPOSE: Verify config defaults, bootstrap templates, and config validation behavior.
+# OWNS: Template rendering expectations, config loading, and readiness checks.
+# DOCS: docs/product.md, docs/arch.md, docs/provider-matrix.md, agent_chat/plan_crawl4ai_opt_in_2026-04-24.md
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -25,12 +30,7 @@ def _build_config() -> Config:
     return Config(
         llm_backends=["openrouter"],
         search_backends=["jina"],
-        fetch_backends=[
-            "crawl4ai_local",
-            "special_trafilatura",
-            "special_playwright",
-            "markdown_new",
-        ],
+        fetch_backends=["special_trafilatura", "special_playwright", "markdown_new"],
         providers={
             "openrouter": {
                 "type": "openai_compatible",
@@ -41,10 +41,6 @@ def _build_config() -> Config:
             "jina": {
                 "type": "jina",
                 "api_key": "test-jina",
-            },
-            "crawl4ai_local": {
-                "type": "crawl4ai",
-                "headless": True,
             },
             "special_trafilatura": {
                 "type": "special_trafilatura",
@@ -95,19 +91,18 @@ def test_write_default_template_writes_config_toml(tmp_path: Path) -> None:
     assert config_path.exists()
     text = config_path.read_text(encoding="utf-8")
     assert "llm_backends = []" in text
-    assert (
-        'fetch_backends = ["crawl4ai_local", "special_trafilatura", "special_playwright", "markdown_new"]'
-        in text
-    )
+    assert 'fetch_backends = ["special_trafilatura", "special_playwright", "markdown_new"]' in text
     assert "[providers.markdown_new]" in text
     assert "[providers.special_trafilatura]" in text
     assert "[providers.special_playwright]" in text
+    assert "# [providers.crawl4ai_local]" in text
     assert "# [providers.openrouter]" in text
     assert text.count("# [providers.jina]") == 1
     assert text.count("# [providers.searxng]") == 1
     assert "Define each [providers.<name>] table only once" in text
     assert '# - add "jina" to search_backends' in text
     assert '# - add "searxng" to search_backends' in text
+    assert '# - add "crawl4ai_local" to fetch_backends' in text
     assert '# - add "jina" to fetch_backends' in text
     assert '# search_backends = ["jina"]' not in text
 
@@ -144,12 +139,7 @@ def test_build_doctor_report_accepts_searxng_search_provider() -> None:
     config = Config(
         llm_backends=["openrouter"],
         search_backends=["searxng"],
-        fetch_backends=[
-            "crawl4ai_local",
-            "special_trafilatura",
-            "special_playwright",
-            "markdown_new",
-        ],
+        fetch_backends=["special_trafilatura", "special_playwright", "markdown_new"],
         providers={
             "openrouter": {
                 "type": "openai_compatible",
@@ -160,10 +150,6 @@ def test_build_doctor_report_accepts_searxng_search_provider() -> None:
             "searxng": {
                 "type": "searxng",
                 "base_url": "https://search.example.org",
-            },
-            "crawl4ai_local": {
-                "type": "crawl4ai",
-                "headless": True,
             },
             "special_trafilatura": {
                 "type": "special_trafilatura",
@@ -193,7 +179,7 @@ def test_load_config_parses_toml(tmp_path: Path, monkeypatch) -> None:
         """
 llm_backends = ["openrouter"]
 search_backends = ["jina"]
-fetch_backends = ["crawl4ai_local", "special_trafilatura", "special_playwright", "markdown_new"]
+fetch_backends = ["special_trafilatura", "special_playwright", "markdown_new"]
 
 default_effort = "m"
 max_context = 128000
@@ -216,10 +202,6 @@ model = "test-model"
 type = "jina"
 api_key = "test-jina"
 
-[providers.crawl4ai_local]
-type = "crawl4ai"
-headless = true
-
 [providers.special_trafilatura]
 type = "special_trafilatura"
 
@@ -238,12 +220,7 @@ retain_images = false
 
     assert loaded.llm_backends == ["openrouter"]
     assert loaded.search_backends == ["jina"]
-    assert loaded.fetch_backends == [
-        "crawl4ai_local",
-        "special_trafilatura",
-        "special_playwright",
-        "markdown_new",
-    ]
+    assert loaded.fetch_backends == ["special_trafilatura", "special_playwright", "markdown_new"]
     assert loaded.providers["openrouter"]["type"] == "openai_compatible"
     assert loaded.provider_timeout == 30
     assert loaded.direct_fetch_max_tokens == 8000
@@ -281,6 +258,11 @@ def test_validate_config_allows_empty_llm_and_search_chains() -> None:
     is_valid, errors = validate_config(DEFAULT_CONFIG)
     assert is_valid
     assert errors == []
+    assert DEFAULT_CONFIG["fetch_backends"] == [
+        "special_trafilatura",
+        "special_playwright",
+        "markdown_new",
+    ]
 
 
 def test_ensure_config_writes_template_and_raises(tmp_path: Path, monkeypatch) -> None:
@@ -292,7 +274,12 @@ def test_ensure_config_writes_template_and_raises(tmp_path: Path, monkeypatch) -
 
     assert excinfo.value.config_path == config_path
     assert config_path.exists()
-    assert "[providers.crawl4ai_local]" in config_path.read_text(encoding="utf-8")
+    template_text = config_path.read_text(encoding="utf-8")
+    assert "# [providers.crawl4ai_local]" in template_text
+    assert (
+        'fetch_backends = ["special_trafilatura", "special_playwright", "markdown_new"]'
+        in template_text
+    )
 
 
 def test_save_config_writes_commented_examples(tmp_path: Path, monkeypatch) -> None:

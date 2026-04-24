@@ -104,7 +104,7 @@ Here is the practical short version of what NEXI supports today:
 ### Fetch 📄
 
 - `markdown_new`
-- `crawl4ai`
+- `crawl4ai` (opt-in local runtime-backed)
 - `special_trafilatura`
 - `special_playwright`
 - `jina`
@@ -191,7 +191,7 @@ If you are upgrading from pre-2.0 behavior, recreate or review your config inste
 
 Config lives at `~/.config/nexi/config.toml`.
 
-NEXI generates a commented template automatically if it is missing. The template enables zero-config fetch defaults and shows commented examples for provider families that require activation.
+NEXI generates a commented template automatically if it is missing. The template enables zero-config fetch defaults and shows commented examples for provider families that require activation. Crawl4AI remains supported as an opt-in fetch example rather than a default activation.
 
 Useful commands:
 
@@ -205,7 +205,7 @@ Example shape:
 ```toml
 llm_backends = []
 search_backends = []
-fetch_backends = ["crawl4ai_local", "special_trafilatura", "special_playwright", "markdown_new"]
+fetch_backends = ["special_trafilatura", "special_playwright", "markdown_new"]
 
 default_effort = "m"
 max_context = 128000
@@ -214,14 +214,20 @@ direct_fetch_max_tokens = 8000
 search_provider_retries = 2
 fetch_provider_retries = 2
 
+[providers.special_trafilatura]
+type = "special_trafilatura"
+
+[providers.special_playwright]
+type = "special_playwright"
+
 [providers.markdown_new]
 type = "markdown_new"
 method = "auto"
 retain_images = false
 
-[providers.crawl4ai_local]
-type = "crawl4ai"
-headless = true
+# [providers.crawl4ai_local]
+# type = "crawl4ai"
+# headless = true
 
 # Uncomment one LLM and one search provider.
 # llm_backends = ["openrouter"]

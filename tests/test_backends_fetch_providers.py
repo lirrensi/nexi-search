@@ -1,5 +1,10 @@
 """Tests for concrete fetch provider adapters."""
 
+# FILE: tests/test_backends_fetch_providers.py
+# PURPOSE: Verify fetch adapter behavior for concrete provider implementations.
+# OWNS: Provider-level fetch payload conversion, dependency handling, and chatter suppression tests.
+# DOCS: agent_chat/plan_crawl4ai_quiet_2026-04-24.md
+
 from __future__ import annotations
 
 import sys
@@ -125,6 +130,143 @@ async def test_crawl4ai_fetch_provider_returns_markdown(monkeypatch) -> None:
     )
 
     assert payload == {"pages": [{"url": "https://example.com", "content": "# Local"}]}
+
+
+@pytest.mark.asyncio
+async def test_crawl4ai_fetch_provider_is_quiet_when_not_verbose(
+    monkeypatch,
+    capsys,
+) -> None:
+    """Quiet Crawl4AI runs suppress provider chatter and still fetch content."""
+
+    captures: dict[str, dict[str, object]] = {}
+
+    class FakeCrawler:
+        """Async crawler test double that emits chatter."""
+
+        def __init__(self, config: object = None) -> None:
+            self.config = config
+
+        async def __aenter__(self) -> FakeCrawler:
+            print("crawler-enter")
+            print("crawler-enter-stderr", file=sys.stderr)
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            print("crawler-exit")
+            print("crawler-exit-stderr", file=sys.stderr)
+            return None
+
+        async def arun(self, url: str, config: object = None) -> object:
+            print(f"crawler-run:{url}")
+            print("crawler-run-stderr", file=sys.stderr)
+            return SimpleNamespace(success=True, markdown=SimpleNamespace(raw_markdown="# Quiet"))
+
+    class FakeBrowserConfig:
+        """Browser config test double."""
+
+        def __init__(self, **kwargs: object) -> None:
+            captures["browser"] = kwargs
+
+    class FakeRunConfig:
+        """Run config test double."""
+
+        def __init__(self, **kwargs: object) -> None:
+            captures["run"] = kwargs
+
+    fake_module = ModuleType("crawl4ai")
+    fake_module.AsyncWebCrawler = FakeCrawler
+    fake_module.BrowserConfig = FakeBrowserConfig
+    fake_module.CrawlerRunConfig = FakeRunConfig
+    fake_module.CacheMode = SimpleNamespace(BYPASS="BYPASS")
+    monkeypatch.setitem(sys.modules, "crawl4ai", fake_module)
+
+    provider = Crawl4AIFetchProvider()
+    payload = await provider.fetch(
+        ["https://example.com"],
+        {"type": "crawl4ai", "headless": True, "cache_mode": "BYPASS"},
+        timeout=5,
+        verbose=False,
+    )
+
+    captured = capsys.readouterr()
+
+    assert payload == {"pages": [{"url": "https://example.com", "content": "# Quiet"}]}
+    assert captured.out == ""
+    assert captured.err == ""
+    assert captures["browser"]["verbose"] is False
+    assert captures["run"]["verbose"] is False
+
+
+@pytest.mark.asyncio
+async def test_crawl4ai_fetch_provider_verbose_keeps_output(
+    monkeypatch,
+    capsys,
+) -> None:
+    """Verbose Crawl4AI runs preserve provider chatter for debugging."""
+
+    captures: dict[str, dict[str, object]] = {}
+
+    class FakeCrawler:
+        """Async crawler test double that emits chatter."""
+
+        def __init__(self, config: object = None) -> None:
+            self.config = config
+
+        async def __aenter__(self) -> FakeCrawler:
+            print("crawler-enter")
+            print("crawler-enter-stderr", file=sys.stderr)
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            print("crawler-exit")
+            print("crawler-exit-stderr", file=sys.stderr)
+            return None
+
+        async def arun(self, url: str, config: object = None) -> object:
+            print(f"crawler-run:{url}")
+            print("crawler-run-stderr", file=sys.stderr)
+            return SimpleNamespace(success=True, markdown=SimpleNamespace(raw_markdown="# Loud"))
+
+    class FakeBrowserConfig:
+        """Browser config test double."""
+
+        def __init__(self, **kwargs: object) -> None:
+            captures["browser"] = kwargs
+
+    class FakeRunConfig:
+        """Run config test double."""
+
+        def __init__(self, **kwargs: object) -> None:
+            captures["run"] = kwargs
+
+    fake_module = ModuleType("crawl4ai")
+    fake_module.AsyncWebCrawler = FakeCrawler
+    fake_module.BrowserConfig = FakeBrowserConfig
+    fake_module.CrawlerRunConfig = FakeRunConfig
+    fake_module.CacheMode = SimpleNamespace(BYPASS="BYPASS")
+    monkeypatch.setitem(sys.modules, "crawl4ai", fake_module)
+
+    provider = Crawl4AIFetchProvider()
+    payload = await provider.fetch(
+        ["https://example.com"],
+        {"type": "crawl4ai", "headless": True, "cache_mode": "BYPASS"},
+        timeout=5,
+        verbose=True,
+    )
+
+    captured = capsys.readouterr()
+
+    assert payload == {"pages": [{"url": "https://example.com", "content": "# Loud"}]}
+    assert "[Crawl4AI] URL: https://example.com" in captured.out
+    assert "crawler-enter" in captured.out
+    assert "crawler-run:https://example.com" in captured.out
+    assert "crawler-exit" in captured.out
+    assert "crawler-enter-stderr" in captured.err
+    assert "crawler-run-stderr" in captured.err
+    assert "crawler-exit-stderr" in captured.err
+    assert captures["browser"]["verbose"] is True
+    assert captures["run"]["verbose"] is True
 
 
 @pytest.mark.asyncio

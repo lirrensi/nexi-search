@@ -1,8 +1,19 @@
 """Crawl4AI fetch provider for NEXI."""
 
+# FILE: nexi/backends/crawl4ai.py
+# PURPOSE: Adapt Crawl4AI into NEXI fetch payloads while keeping non-verbose runs quiet.
+# OWNS: Crawl4AI-backed fetch configuration, execution, fallback handling, and noise suppression.
+# EXPORTS: Crawl4AIFetchProvider
+# DOCS: agent_chat/plan_crawl4ai_quiet_2026-04-24.md
+
 from __future__ import annotations
 
+import contextlib
 import importlib
+import inspect
+import logging
+import os
+import warnings
 from html import unescape
 from typing import Any
 
@@ -43,33 +54,34 @@ class Crawl4AIFetchProvider:
         verbose: bool,
     ) -> dict[str, Any]:
         """Fetch content from Crawl4AI."""
-        crawl4ai = _import_crawl4ai()
-        browser_config = _build_browser_config(crawl4ai, config)
-        run_config = _build_run_config(crawl4ai, config)
+        with _crawl4ai_noise_suppressed(verbose):
+            crawl4ai = _import_crawl4ai()
+            browser_config = _build_browser_config(crawl4ai, config, verbose)
+            run_config = _build_run_config(crawl4ai, config, verbose)
 
-        pages = []
-        async with crawl4ai.AsyncWebCrawler(config=browser_config) as crawler:
-            for url in urls:
-                if verbose:
-                    print(f"  [Crawl4AI] URL: {url}")
-                try:
-                    result = await crawler.arun(url=url, config=run_config)
-                except Exception as exc:
-                    fallback_page = await _fetch_via_http(url, timeout, verbose)
-                    pages.append(
-                        fallback_page
-                        if fallback_page.get("content")
-                        else {"url": url, "content": "", "error": str(exc)}
-                    )
-                    continue
+            pages = []
+            async with crawl4ai.AsyncWebCrawler(config=browser_config) as crawler:
+                for url in urls:
+                    if verbose:
+                        print(f"  [Crawl4AI] URL: {url}")
+                    try:
+                        result = await crawler.arun(url=url, config=run_config)
+                    except Exception as exc:
+                        fallback_page = await _fetch_via_http(url, timeout, verbose)
+                        pages.append(
+                            fallback_page
+                            if fallback_page.get("content")
+                            else {"url": url, "content": "", "error": str(exc)}
+                        )
+                        continue
 
-                page = _result_to_page(url, result)
-                if page.get("error"):
-                    fallback_page = await _fetch_via_http(url, timeout, verbose)
-                    pages.append(fallback_page if fallback_page.get("content") else page)
-                    continue
+                    page = _result_to_page(url, result)
+                    if page.get("error"):
+                        fallback_page = await _fetch_via_http(url, timeout, verbose)
+                        pages.append(fallback_page if fallback_page.get("content") else page)
+                        continue
 
-                pages.append(page)
+                    pages.append(page)
 
         return {"pages": pages}
 
@@ -85,7 +97,7 @@ def _import_crawl4ai() -> Any:
         ) from exc
 
 
-def _build_browser_config(crawl4ai: Any, config: dict[str, Any]) -> Any:
+def _build_browser_config(crawl4ai: Any, config: dict[str, Any], verbose: bool) -> Any:
     """Build BrowserConfig when available."""
     browser_config_class = getattr(crawl4ai, "BrowserConfig", None)
     if browser_config_class is None:
@@ -99,10 +111,13 @@ def _build_browser_config(crawl4ai: Any, config: dict[str, Any]) -> Any:
     if isinstance(config.get("headless"), bool):
         kwargs["headless"] = config["headless"]
 
+    if _supports_kwarg(browser_config_class, "verbose"):
+        kwargs["verbose"] = verbose
+
     return browser_config_class(**kwargs)
 
 
-def _build_run_config(crawl4ai: Any, config: dict[str, Any]) -> Any:
+def _build_run_config(crawl4ai: Any, config: dict[str, Any], verbose: bool) -> Any:
     """Build CrawlerRunConfig when available."""
     run_config_class = getattr(crawl4ai, "CrawlerRunConfig", None)
     if run_config_class is None:
@@ -116,7 +131,48 @@ def _build_run_config(crawl4ai: Any, config: dict[str, Any]) -> Any:
         if enum_value is not None:
             kwargs["cache_mode"] = enum_value
 
+    if _supports_kwarg(run_config_class, "verbose"):
+        kwargs["verbose"] = verbose
+
     return run_config_class(**kwargs)
+
+
+def _supports_kwarg(callable_obj: Any, kwarg_name: str) -> bool:
+    """Return True when a callable accepts the named keyword argument."""
+    try:
+        signature = inspect.signature(callable_obj)
+    except (TypeError, ValueError):
+        return True
+
+    for parameter in signature.parameters.values():
+        if parameter.kind is inspect.Parameter.VAR_KEYWORD:
+            return True
+        if parameter.name == kwarg_name:
+            return True
+
+    return False
+
+
+@contextlib.contextmanager
+def _crawl4ai_noise_suppressed(verbose: bool):
+    """Silence Crawl4AI chatter for quiet runs without changing results."""
+    if verbose:
+        yield
+        return
+
+    previous_disable_level = logging.root.manager.disable
+    try:
+        logging.disable(logging.CRITICAL)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            with (
+                open(os.devnull, "w", encoding="utf-8") as devnull,
+                contextlib.redirect_stdout(devnull),
+                contextlib.redirect_stderr(devnull),
+            ):
+                yield
+    finally:
+        logging.disable(previous_disable_level)
 
 
 def _result_to_page(url: str, result: Any) -> dict[str, Any]:

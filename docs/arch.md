@@ -14,7 +14,7 @@ NEXI is an intelligent research CLI that uses an agentic search loop powered by 
 - **Provider-Orchestrated**: LLM, search, and fetch capabilities route through ordered provider chains
 - **Context-Aware**: Automatically manages conversation context to prevent token overflow
 - **Tool-Based**: Uses function calling to give the LLM structured access to web capabilities
-- **Failure-Resistant**: Search and fetch retry within a provider, then fail over; LLM fails over immediately on hard failure
+- **Failure-Resistant**: Search and fetch retry within a provider, then fail over; empty search responses also fail over; LLM fails over immediately on hard failure
 - **Efficient**: Parallel searches and intelligent caching minimize latency
 - **Transparent**: Verbose mode shows all decisions, tool calls, provider failures, and token usage
 
@@ -374,7 +374,8 @@ Three tools are exposed to the LLM via function calling:
 - `run_search_sync()`: Synchronous wrapper using new event loop
 
 **Retry Logic**:
-- Search providers retry failed items up to `config.search_provider_retries` times (default: 2)
+- Search providers retry provider-error items up to `config.search_provider_retries` times (default: 2)
+- Empty search results are failover-worthy and are recorded with `failure_kind: "empty_results"`
 - Fetch providers retry failed items up to `config.fetch_provider_retries` times (default: 2)
 - Search/fetch retries use exponential backoff before failover
 - LLM providers do NOT use same-provider retry on hard failure; they fail over immediately
@@ -459,9 +460,14 @@ class LLMProvider(Provider, Protocol):
 5. Validate provider config
 6. Run the provider against pending queries
 7. Keep successful query results
-8. Retry only failed queries within the same provider up to `search_provider_retries`
-9. Move any still-failed queries to the next provider in the chain
-10. Return the combined result set plus provider failure metadata
+8. Retry only provider-error queries within the same provider up to `search_provider_retries`
+9. Move any empty-result queries to the next provider in the chain immediately
+10. Move any still-failed provider-error queries to the next provider in the chain
+11. Return the combined result set plus provider failure metadata
+
+**Provider failure metadata**:
+- `failure_kind` distinguishes `validation_error`, `provider_error`, and `empty_results`
+- `failed_items` keeps the affected queries or URLs explicit for logs and doctor output
 
 **Fetch orchestration process**:
 1. Start with the full URL set as pending
@@ -1223,7 +1229,7 @@ Example configuration:
 ```toml
 llm_backends = ["openrouter"]
 search_backends = ["searxng"]
-fetch_backends = ["crawl4ai_local", "special_trafilatura", "special_playwright", "markdown_new"]
+fetch_backends = ["special_trafilatura", "special_playwright", "markdown_new"]
 
 [providers.openrouter]
 type = "openai_compatible"
@@ -1234,6 +1240,21 @@ model = "google/gemini-2.5-flash-lite"
 [providers.searxng]
 type = "searxng"
 base_url = "https://search.example.org"
+
+[providers.special_trafilatura]
+type = "special_trafilatura"
+
+[providers.special_playwright]
+type = "special_playwright"
+
+[providers.markdown_new]
+type = "markdown_new"
+method = "auto"
+retain_images = false
+
+# [providers.crawl4ai_local]
+# type = "crawl4ai"
+# headless = true
 ```
 
 ### Custom Prompts
