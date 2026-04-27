@@ -5,15 +5,13 @@ description: NEXI provides three useful CLI surfaces - `nexi` for full agent ans
 
 # NEXI for Agents
 
-NEXI has three main command surfaces for agents:
+Use the command that matches the job:
 
 - `nexi` - full agentic search with synthesized answers and citations
 - `nexi-search` - direct search-provider execution without the agent loop
 - `nexi-fetch` - direct fetch or extraction without the agent loop
 
-## Invocation
-
-Pick the command that matches the job:
+## Quick use
 
 ```bash
 nexi --plain "your search query"
@@ -21,15 +19,15 @@ nexi-search --json "your search query"
 nexi-fetch --json "https://example.com"
 ```
 
-- Use `nexi --plain` when you want a final synthesized answer with citations.
-- Use `nexi-search --json` when you want raw search results for scripts or agent post-processing.
-- Use `nexi-fetch --json` when you want fetched page content or extraction payloads.
+- `nexi --plain` = synthesized answer + citations.
+- `nexi-search --json` = raw search results for scripts or post-processing.
+- `nexi-fetch --json` = fetched content or extraction payloads.
 
-`nexi --plain` output is plain text with citations in `[1]`, `[2]` format and a sources section at the end.
+`nexi --plain` outputs plain text with `[1]`, `[2]` citations and a sources section.
 
-## Effort Levels
+## Effort levels
 
-Control agent search depth with `-e`; NEXI keeps the exact iteration and token budgets internal:
+Control search depth with `-e`:
 
 | Level | Use When |
 |-------|----------|
@@ -42,19 +40,7 @@ Example:
 nexi --plain -e l "compare React vs Svelte performance 2024"
 ```
 
-## Output Format
-
-```text
-[Answer text with inline citations like [1] and [2]...]
-
-Sources:
-[1] https://example.com/page1 - "Page Title"
-[2] https://example.com/page2 - "Another Title"
-```
-
-Parse the sources section to extract URLs for further processing if needed.
-
-## Additional Flags
+## Common flags
 
 | Flag | Purpose |
 |------|---------|
@@ -66,11 +52,15 @@ Parse the sources section to extract URLs for further processing if needed.
 | `--show ID` | Show one saved result by ID |
 | `--json` | Structured output for `nexi-search` and `nexi-fetch` |
 
-## Config Lifecycle
+## Direct provider override
 
-If the config file does not exist yet, NEXI creates `~/.config/nexi/config.toml`, tells you it is incomplete, and exits.
+Use a specific provider when the fallback chain keeps failing or the user explicitly wants one provider.
 
-Useful commands:
+- `nexi-search --provider NAME` targets one configured search provider only.
+- `nexi-fetch --provider NAME` targets one configured fetch provider only.
+- This bypasses fallback chaining, so missing or mismatched providers fail fast.
+
+## Configuration commands
 
 ```bash
 nexi config
@@ -78,15 +68,12 @@ nexi onboard
 nexi doctor
 ```
 
-- `nexi config` opens the current config file
-- `nexi onboard` guides a basic LLM plus search setup
-- `nexi doctor` checks whether `nexi`, `nexi-search`, and `nexi-fetch` are ready
+- `nexi config` = open the current config file
+- `nexi onboard` = guided LLM + search setup
+- `nexi doctor` = check `nexi`, `nexi-search`, and `nexi-fetch`
 
-## Prerequisites
+## When to read refs
 
-NEXI requires configuration before use. See [references/installation.md](references/installation.md) for:
-- Install commands
-- Required API keys and default fetch setup
-- Config file location and format
-
-If NEXI fails with config errors, read the installation reference to help set it up.
+- New install or runtime setup issues: [references/installation.md](references/installation.md)
+- Config file lifecycle and shape: [references/configuration.md](references/configuration.md)
+- Provider-specific setup (Tavily, Exa, SearXNG, Playwright, etc.): [references/providers.md](references/providers.md)
