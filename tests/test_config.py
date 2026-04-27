@@ -30,7 +30,7 @@ def _build_config() -> Config:
     return Config(
         llm_backends=["openrouter"],
         search_backends=["jina"],
-        fetch_backends=["special_trafilatura", "special_playwright", "markdown_new"],
+        fetch_backends=["snitchmd", "special_trafilatura", "special_playwright", "markdown_new"],
         providers={
             "openrouter": {
                 "type": "openai_compatible",
@@ -47,6 +47,10 @@ def _build_config() -> Config:
             },
             "special_playwright": {
                 "type": "special_playwright",
+            },
+            "snitchmd": {
+                "type": "snitchmd",
+                "mode": "precision",
             },
             "markdown_new": {
                 "type": "markdown_new",
@@ -91,8 +95,9 @@ def test_write_default_template_writes_config_toml(tmp_path: Path) -> None:
     assert config_path.exists()
     text = config_path.read_text(encoding="utf-8")
     assert "llm_backends = []" in text
-    assert 'fetch_backends = ["special_trafilatura", "special_playwright", "markdown_new"]' in text
+    assert 'fetch_backends = ["snitchmd", "special_trafilatura", "special_playwright", "markdown_new"]' in text
     assert "[providers.markdown_new]" in text
+    assert "[providers.snitchmd]" in text
     assert "[providers.special_trafilatura]" in text
     assert "[providers.special_playwright]" in text
     assert "# [providers.crawl4ai_local]" in text
@@ -102,6 +107,7 @@ def test_write_default_template_writes_config_toml(tmp_path: Path) -> None:
     assert "Define each [providers.<name>] table only once" in text
     assert '# - add "jina" to search_backends' in text
     assert '# - add "searxng" to search_backends' in text
+    assert '# - add "snitchmd" to fetch_backends' in text
     assert '# - add "crawl4ai_local" to fetch_backends' in text
     assert '# - add "jina" to fetch_backends' in text
     assert '# search_backends = ["jina"]' not in text
@@ -259,6 +265,7 @@ def test_validate_config_allows_empty_llm_and_search_chains() -> None:
     assert is_valid
     assert errors == []
     assert DEFAULT_CONFIG["fetch_backends"] == [
+        "snitchmd",
         "special_trafilatura",
         "special_playwright",
         "markdown_new",
@@ -277,7 +284,7 @@ def test_ensure_config_writes_template_and_raises(tmp_path: Path, monkeypatch) -
     template_text = config_path.read_text(encoding="utf-8")
     assert "# [providers.crawl4ai_local]" in template_text
     assert (
-        'fetch_backends = ["special_trafilatura", "special_playwright", "markdown_new"]'
+        'fetch_backends = ["snitchmd", "special_trafilatura", "special_playwright", "markdown_new"]'
         in template_text
     )
 

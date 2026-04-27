@@ -18,6 +18,7 @@ from nexi.backends.perplexity_search import PerplexitySearchProvider
 from nexi.backends.searxng import SearXNGSearchProvider
 from nexi.backends.serpapi import SerpAPISearchProvider
 from nexi.backends.serper import SerperSearchProvider
+from nexi.backends.snitchmd import SnitchFetchProvider
 from nexi.backends.special_fetch import (
     SpecialPlaywrightFetchProvider,
     SpecialTrafilaturaFetchProvider,
@@ -43,6 +44,7 @@ FETCH_PROVIDER_REGISTRY: dict[str, type[FetchProvider]] = {
     "jina": JinaFetchProvider,
     "linkup": LinkupFetchProvider,
     "markdown_new": MarkdownNewFetchProvider,
+    "snitchmd": SnitchFetchProvider,
     "special_playwright": SpecialPlaywrightFetchProvider,
     "special_trafilatura": SpecialTrafilaturaFetchProvider,
     "tavily": TavilyFetchProvider,

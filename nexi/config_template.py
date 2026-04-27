@@ -15,6 +15,7 @@ DEFAULT_CHAIN_CONFIG: dict[str, list[str]] = {
     "llm_backends": [],
     "search_backends": [],
     "fetch_backends": [
+        "snitchmd",
         "special_trafilatura",
         "special_playwright",
         "markdown_new",
@@ -35,6 +36,10 @@ DEFAULT_SCALAR_CONFIG: dict[str, Any] = {
 }
 
 ACTIVE_FETCH_PROVIDER_DEFAULTS: dict[str, dict[str, Any]] = {
+    "snitchmd": {
+        "type": "snitchmd",
+        "mode": "precision",
+    },
     "special_trafilatura": {
         "type": "special_trafilatura",
     },
@@ -139,6 +144,10 @@ PROVIDER_EXAMPLES: dict[str, dict[str, Any]] = {
         "headless": True,
         "cdp_url": "http://localhost:9222",
     },
+    "snitchmd": {
+        "type": "snitchmd",
+        "mode": "precision",
+    },
     "special_trafilatura": {
         "type": "special_trafilatura",
     },
@@ -169,6 +178,7 @@ FETCH_EXAMPLE_ORDER = [
     "firecrawl",
     "linkup",
     "crawl4ai_local",
+    "snitchmd",
     "special_trafilatura",
     "special_playwright",
     "custom_fetch",

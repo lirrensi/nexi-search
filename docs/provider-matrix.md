@@ -28,6 +28,7 @@ If a provider family is not listed here, it is not part of the product.
 | `special_trafilatura` | Fetch | `special_trafilatura` | Active by default | none | Supported | Zero-config resilient fetch fallback: HTTPX + Trafilatura + best-effort text extraction. |
 | `special_playwright` | Fetch | `special_playwright` | Active by default | none | Supported | Headed Playwright fetch fallback that extracts rendered page text instead of raw HTML. |
 | `markdown_new` | Fetch | `markdown_new` | Active by default | none | Supported | Zero-key remote markdown fetch fallback. |
+| `snitchmd` | Fetch | `snitchmd` | Active by default | none | Supported | Docker-backed rendered-page-to-markdown fetch provider with clear Docker availability errors. |
 | `crawl4ai` | Fetch | `crawl4ai_local` | Commented example | none | Supported | Local/runtime-backed fetch provider example. Optional runtime dependency remains a user environment concern. |
 | `tavily` | Search, Fetch | `tavily` | Commented example | `api_key` | Supported | Source-first search and extraction provider family. |
 | `exa` | Search, Fetch | `exa` | Commented example | `api_key` | Supported | Semantic search plus page-content retrieval. |
@@ -66,7 +67,7 @@ These provider families are tracked intentionally, but they are not valid shippe
 
 The generated template SHOULD look like this at a high level:
 
-- `fetch_backends = ["special_trafilatura", "special_playwright", "markdown_new"]`
+- `fetch_backends = ["snitchmd", "special_trafilatura", "special_playwright", "markdown_new"]`
 - `llm_backends = []` until the user activates one
 - `search_backends = []` until the user activates one
 - visible commented examples for common LLM/search providers and the `crawl4ai_local` opt-in example

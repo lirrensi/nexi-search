@@ -21,6 +21,7 @@ from nexi.backends.registry import (
 from nexi.backends.searxng import SearXNGSearchProvider
 from nexi.backends.serpapi import SerpAPISearchProvider
 from nexi.backends.serper import SerperSearchProvider
+from nexi.backends.snitchmd import SnitchFetchProvider
 from nexi.backends.special_fetch import (
     SpecialPlaywrightFetchProvider,
     SpecialTrafilaturaFetchProvider,
@@ -152,6 +153,16 @@ def test_resolve_crawl4ai_fetch_provider_success() -> None:
     )
 
     assert provider is Crawl4AIFetchProvider
+
+
+def test_resolve_snitchmd_fetch_provider_success() -> None:
+    """SnitchMD fetch provider resolves correctly."""
+    provider = resolve_fetch_provider(
+        "snitchmd_local",
+        {"snitchmd_local": {"type": "snitchmd"}},
+    )
+
+    assert provider is SnitchFetchProvider
 
 
 def test_resolve_llm_provider_success() -> None:

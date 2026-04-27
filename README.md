@@ -104,7 +104,8 @@ Here is the practical short version of what NEXI supports today:
 ### Fetch 📄
 
 - `markdown_new`
-- `crawl4ai` (opt-in local runtime-backed)
+- `snitchmd` (Docker-backed, default)
+- `crawl4ai` (opt-in local Docker runtime)
 - `special_trafilatura`
 - `special_playwright`
 - `jina`
@@ -191,7 +192,7 @@ If you are upgrading from pre-2.0 behavior, recreate or review your config inste
 
 Config lives at `~/.config/nexi/config.toml`.
 
-NEXI generates a commented template automatically if it is missing. The template enables zero-config fetch defaults and shows commented examples for provider families that require activation. Crawl4AI remains supported as an opt-in fetch example rather than a default activation.
+NEXI generates a commented template automatically if it is missing. The template enables zero-config fetch defaults and shows commented examples for provider families that require activation. SnitchMD is enabled by default when Docker is available; Crawl4AI remains opt-in.
 
 Useful commands:
 
@@ -205,7 +206,7 @@ Example shape:
 ```toml
 llm_backends = []
 search_backends = []
-fetch_backends = ["special_trafilatura", "special_playwright", "markdown_new"]
+fetch_backends = ["snitchmd", "special_trafilatura", "special_playwright", "markdown_new"]
 
 default_effort = "m"
 max_context = 128000
@@ -219,6 +220,10 @@ type = "special_trafilatura"
 
 [providers.special_playwright]
 type = "special_playwright"
+
+[providers.snitchmd]
+type = "snitchmd"
+mode = "precision"
 
 [providers.markdown_new]
 type = "markdown_new"
