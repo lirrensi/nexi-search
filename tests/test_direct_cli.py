@@ -80,6 +80,41 @@ def test_nexi_search_json() -> None:
     mock_chain.assert_awaited_once()
 
 
+def test_nexi_search_non_verbose_prints_human_output() -> None:
+    """nexi-search prints formatted text output in non-verbose mode."""
+    runner = CliRunner()
+    payload = {
+        "searches": [
+            {
+                "query": "test query",
+                "results": [
+                    {
+                        "title": "Result Title",
+                        "url": "https://example.com",
+                        "description": "Result description",
+                    }
+                ],
+            }
+        ],
+        "provider_failures": [],
+    }
+
+    with (
+        patch("nexi.search_cli.ensure_config", return_value=_build_config()),
+        patch("nexi.search_cli.check_command_readiness", return_value=[]),
+        patch(
+            "nexi.search_cli.run_search_chain", new=AsyncMock(return_value=payload)
+        ) as mock_chain,
+    ):
+        result = runner.invoke(search_main, ["test query"])
+
+    assert result.exit_code == 0
+    assert "Query: test query" in result.output
+    assert "1. Result Title" in result.output
+    assert "https://example.com" in result.output
+    mock_chain.assert_awaited_once()
+
+
 def test_nexi_search_provider_override_uses_single_backend() -> None:
     """nexi-search --provider narrows the chain to one provider."""
     runner = CliRunner()
@@ -177,6 +212,31 @@ def test_nexi_fetch_json() -> None:
     assert json.loads(result.output) == payload
     mock_get.assert_awaited_once()
     mock_post.assert_called_once()
+
+
+def test_nexi_fetch_non_verbose_prints_content_output() -> None:
+    """nexi-fetch prints fetched content in non-verbose mode."""
+    runner = CliRunner()
+    payload = {
+        "pages": [{"url": "https://example.com", "content": "https://example.com\n---\nBody"}],
+        "provider_failures": [],
+    }
+
+    with (
+        patch("nexi.fetch_cli.ensure_config", return_value=_build_config()),
+        patch("nexi.fetch_cli.check_command_readiness", return_value=[]),
+        patch(
+            "nexi.fetch_cli.post_process_direct_fetch_payload",
+            side_effect=lambda payload, **kwargs: payload,
+        ),
+        patch("nexi.fetch_cli.web_get", new=AsyncMock(return_value=payload)) as mock_get,
+    ):
+        result = runner.invoke(fetch_main, ["https://example.com"])
+
+    assert result.exit_code == 0
+    assert "https://example.com" in result.output
+    assert "Body" in result.output
+    mock_get.assert_awaited_once()
 
 
 def test_nexi_fetch_provider_override_uses_single_backend() -> None:

@@ -21,7 +21,7 @@ from nexi.config import (
     load_config,
     validate_config,
 )
-from nexi.config_doctor import build_doctor_report
+from nexi.config_doctor import build_doctor_report, build_doctor_summary, build_doctor_warnings
 from nexi.config_template import render_config_toml, write_default_template
 
 
@@ -176,6 +176,26 @@ def test_build_doctor_report_accepts_searxng_search_provider() -> None:
 
     assert report["nexi"] == []
     assert report["nexi-search"] == []
+
+
+def test_build_doctor_summary_and_warnings_include_chain_health() -> None:
+    """Doctor summary surfaces active chains and warns on single-provider chains."""
+    config = _build_config()
+
+    summary = build_doctor_summary(config)
+    warnings = build_doctor_warnings(config)
+
+    assert "Configured providers: 6" in summary
+    assert "llm_backends (1): openrouter" in summary
+    assert "search_backends (1): jina" in summary
+    assert (
+        "fetch_backends (4): snitchmd, special_trafilatura, special_playwright, markdown_new"
+        in summary
+    )
+    assert "LLM models: openrouter=test-model" in summary
+    assert any("Only one provider in llm_backends" in item for item in warnings)
+    assert any("Only one provider in search_backends" in item for item in warnings)
+    assert not any("fetch_backends" in item for item in warnings)
 
 
 def test_load_config_parses_toml(tmp_path: Path, monkeypatch) -> None:

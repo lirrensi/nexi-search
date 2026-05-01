@@ -81,4 +81,55 @@ def build_doctor_report(config: Config) -> dict[str, list[str]]:
     }
 
 
-__all__ = ["build_doctor_report", "check_command_readiness"]
+def build_doctor_summary(config: Config) -> list[str]:
+    """Build a human-readable summary of configured chains and providers."""
+    llm_models = _collect_llm_models(config)
+    summary = [
+        f"Configured providers: {len(config.providers)}",
+        f"llm_backends ({len(config.llm_backends)}): {_format_chain(config.llm_backends)}",
+        f"search_backends ({len(config.search_backends)}): {_format_chain(config.search_backends)}",
+        f"fetch_backends ({len(config.fetch_backends)}): {_format_chain(config.fetch_backends)}",
+    ]
+    if llm_models:
+        summary.append(f"LLM models: {', '.join(llm_models)}")
+    return summary
+
+
+def build_doctor_warnings(config: Config) -> list[str]:
+    """Build non-fatal config warnings for doctor output."""
+    warnings: list[str] = []
+    for chain_name in ("llm_backends", "search_backends", "fetch_backends"):
+        chain = getattr(config, chain_name)
+        if len(chain) == 1:
+            warnings.append(
+                f"Only one provider in {chain_name}; failover is disabled for that capability"
+            )
+    return warnings
+
+
+def _format_chain(chain: list[str]) -> str:
+    """Format an active provider chain for doctor output."""
+    if not chain:
+        return "none"
+    return ", ".join(chain)
+
+
+def _collect_llm_models(config: Config) -> list[str]:
+    """Collect configured model names from active LLM backends."""
+    models: list[str] = []
+    for provider_name in config.llm_backends:
+        provider_config = config.providers.get(provider_name)
+        if not isinstance(provider_config, dict):
+            continue
+        model = provider_config.get("model")
+        if isinstance(model, str) and model.strip():
+            models.append(f"{provider_name}={model.strip()}")
+    return models
+
+
+__all__ = [
+    "build_doctor_report",
+    "build_doctor_summary",
+    "build_doctor_warnings",
+    "check_command_readiness",
+]

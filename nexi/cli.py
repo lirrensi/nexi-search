@@ -21,7 +21,12 @@ from nexi.config import (
     format_config_created_message,
     write_default_template,
 )
-from nexi.config_doctor import build_doctor_report, check_command_readiness
+from nexi.config_doctor import (
+    build_doctor_report,
+    build_doctor_summary,
+    build_doctor_warnings,
+    check_command_readiness,
+)
 from nexi.errors import handle_error
 from nexi.history import (
     add_history_entry,
@@ -205,6 +210,14 @@ def doctor_command() -> None:
         raise click.ClickException(str(exc)) from exc
 
     report = build_doctor_report(config)
+    for line in build_doctor_summary(config):
+        click.echo(line)
+    warnings = build_doctor_warnings(config)
+    if warnings:
+        click.echo("Warnings:")
+        for warning in warnings:
+            click.echo(f"- {warning}")
+
     failed = False
     for command_name in ("nexi", "nexi-search", "nexi-fetch"):
         errors = report[command_name]

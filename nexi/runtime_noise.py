@@ -4,10 +4,15 @@ This module keeps normal commands quiet by suppressing browser/runtime chatter,
 warnings, and unraisable cleanup traces unless verbose mode is enabled.
 """
 
+# FILE: nexi/runtime_noise.py
+# PURPOSE: Centralize quiet/verbose runtime noise behavior for CLI commands.
+# OWNS: Warning suppression context and process-level noise toggles.
+# EXPORTS: configure_runtime_noise, suppress_runtime_chatter
+# DOCS: agent_chat/plan_cli_output_restoration_2026-05-02.md
+
 from __future__ import annotations
 
 import contextlib
-import io
 import logging
 import os
 import sys
@@ -40,12 +45,9 @@ def suppress_runtime_chatter(verbose: bool):
         yield
         return
 
-    stdout_buffer = io.StringIO()
-    stderr_buffer = io.StringIO()
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        with contextlib.redirect_stdout(stdout_buffer), contextlib.redirect_stderr(stderr_buffer):
-            yield
+        yield
 
 
 def _quiet_unraisable_hook(unraisable: object) -> None:

@@ -105,9 +105,27 @@ def test_nexi_doctor_reports_template_readiness_failures(monkeypatch, tmp_path: 
     result = runner.invoke(main, ["doctor"])
 
     assert result.exit_code == 1
+    assert "Configured providers:" in result.output
     assert "nexi: FAIL" in result.output
     assert "nexi-search: FAIL" in result.output
     assert "nexi-fetch: PASS" in result.output
+
+
+def test_nexi_doctor_shows_summary_and_single_provider_warnings() -> None:
+    """Doctor output includes chain summary, model details, and failover warnings."""
+    runner = CliRunner()
+
+    with patch("nexi.cli.ensure_config", return_value=_build_ready_config()):
+        result = runner.invoke(main, ["doctor"])
+
+    assert result.exit_code == 0
+    assert "Configured providers: 4" in result.output
+    assert "llm_backends (1): openrouter" in result.output
+    assert "search_backends (1): jina" in result.output
+    assert "fetch_backends (2): crawl4ai_local, markdown_new" in result.output
+    assert "LLM models: openrouter=test-model" in result.output
+    assert "Only one provider in llm_backends" in result.output
+    assert "Only one provider in search_backends" in result.output
 
 
 def test_nexi_clean_deletes_history_and_rewrites_template(monkeypatch, tmp_path: Path) -> None:
