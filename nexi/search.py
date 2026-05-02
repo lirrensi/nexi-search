@@ -32,6 +32,22 @@ class SearchResult:
 ProgressCallback = Callable[..., None]
 
 
+async def _await_with_heartbeat(
+    awaitable: Any,
+    report_progress: Callable[[str, int, int | None, list[str] | None], None],
+    heartbeat_message: str,
+    iteration: int,
+    interval_s: float = 5.0,
+) -> Any:
+    """Await an operation while emitting periodic progress heartbeats."""
+    task = asyncio.ensure_future(awaitable)
+    while True:
+        done, _pending = await asyncio.wait({task}, timeout=interval_s)
+        if task in done:
+            return await task
+        report_progress(f"{heartbeat_message} (still running)", iteration)
+
+
 async def _request_final_answer(
     messages: list[dict[str, Any]],
     config: Config,
@@ -239,12 +255,17 @@ async def run_search(
             report_progress(f"Iteration {current_iteration}/{max_iterations}", current_iteration)
 
             try:
-                response = await run_llm_chain(
-                    messages=messages,
-                    tools=_get_tool_schemas(),
-                    config=config,
-                    verbose=verbose,
-                    max_tokens=INTERNAL_LLM_MAX_TOKENS,
+                response = await _await_with_heartbeat(
+                    run_llm_chain(
+                        messages=messages,
+                        tools=_get_tool_schemas(),
+                        config=config,
+                        verbose=verbose,
+                        max_tokens=INTERNAL_LLM_MAX_TOKENS,
+                    ),
+                    report_progress=report_progress,
+                    heartbeat_message="Waiting for LLM response",
+                    iteration=current_iteration,
                 )
             except ProviderChainError as exc:
                 if verbose:
@@ -298,12 +319,17 @@ async def run_search(
                         f"Searching for: {', '.join(queries)}",
                         current_iteration,
                     )
-                    result = await execute_tool(
-                        tool_name,
-                        tool_args,
-                        config,
-                        verbose,
-                        query=query,
+                    result = await _await_with_heartbeat(
+                        execute_tool(
+                            tool_name,
+                            tool_args,
+                            config,
+                            verbose,
+                            query=query,
+                        ),
+                        report_progress=report_progress,
+                        heartbeat_message="Running web_search",
+                        iteration=current_iteration,
                     )
 
                     if verbose:
@@ -358,14 +384,19 @@ async def run_search(
                     # Get citation numbers for URLs BEFORE fetching (stable numbering)
                     url_numbers = {url: get_url_number(url) for url in urls}
 
-                    result = await execute_tool(
-                        tool_name,
-                        tool_args,
-                        config,
-                        verbose,
-                        query=query,
-                        url_numbers=url_numbers,  # Pass URL numbers for citation markers
-                        url_titles=url_to_title,  # Pass URL titles for sources list
+                    result = await _await_with_heartbeat(
+                        execute_tool(
+                            tool_name,
+                            tool_args,
+                            config,
+                            verbose,
+                            query=query,
+                            url_numbers=url_numbers,  # Pass URL numbers for citation markers
+                            url_titles=url_to_title,  # Pass URL titles for sources list
+                        ),
+                        report_progress=report_progress,
+                        heartbeat_message="Running web_get",
+                        iteration=current_iteration,
                     )
 
                     if verbose:
@@ -475,10 +506,15 @@ async def run_search(
                 f"Max iterations ({max_iterations}) reached, requesting final answer",
                 max_iterations,
             )
-            final_answer = await _request_final_answer(
-                messages=messages,
-                config=config,
-                verbose=verbose,
+            final_answer = await _await_with_heartbeat(
+                _request_final_answer(
+                    messages=messages,
+                    config=config,
+                    verbose=verbose,
+                ),
+                report_progress=report_progress,
+                heartbeat_message="Waiting for final answer generation",
+                iteration=max_iterations,
             )
 
     except asyncio.CancelledError:
