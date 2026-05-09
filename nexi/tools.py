@@ -97,6 +97,7 @@ __all__ = [
     "create_logical_chunks",
     "execute_tool",
     "get_http_client",
+    "heal_tool_args",
     "web_get",
     "web_search",
 ]
@@ -106,6 +107,7 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "strict": True,
             "name": "web_search",
             "description": "Search the web using the configured provider chain. Supports multiple parallel queries and returns snippets and URLs.",
             "parameters": {
@@ -115,17 +117,17 @@ TOOLS = [
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "List of search queries to execute in parallel",
-                        "minItems": 1,
-                        "maxItems": 5,
                     }
                 },
                 "required": ["queries"],
+                "additionalProperties": False,
             },
         },
     },
     {
         "type": "function",
         "function": {
+            "strict": True,
             "name": "web_get",
             "description": "Fetch and process content from URLs using the configured fetch provider chain. Supports full content, chunk selection, or LLM extraction.",
             "parameters": {
@@ -133,10 +135,8 @@ TOOLS = [
                 "properties": {
                     "urls": {
                         "type": "array",
-                        "items": {"type": "string", "format": "uri"},
+                        "items": {"type": "string"},
                         "description": "List of URLs to fetch content from",
-                        "minItems": 1,
-                        "maxItems": 8,
                     },
                     "instructions": {
                         "type": "string",
@@ -145,21 +145,21 @@ TOOLS = [
                     "get_full": {
                         "type": "boolean",
                         "description": "If true, returns the full page content without LLM processing.",
-                        "default": False,
                     },
                     "use_chunks": {
                         "type": "boolean",
                         "description": "If true, splits page into logical chunks, asks LLM for relevant chunk numbers, and returns only those chunks.",
-                        "default": False,
                     },
                 },
                 "required": ["urls"],
+                "additionalProperties": False,
             },
         },
     },
     {
         "type": "function",
         "function": {
+            "strict": True,
             "name": "final_answer",
             "description": "Provide the final answer to the user's query. This terminates the search loop.",
             "parameters": {
@@ -171,6 +171,7 @@ TOOLS = [
                     }
                 },
                 "required": ["answer"],
+                "additionalProperties": False,
             },
         },
     },
@@ -294,6 +295,131 @@ def _format_page_content(
     return f"{prefix}\n---\n{content}"
 
 
+def heal_tool_args(tool_name: str, args: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+    """Validate and self-heal LLM tool arguments so the pipeline never crashes on malformed input.
+
+    Args:
+        tool_name: Name of the tool being called.
+        args: Raw arguments dict parsed from the LLM response.
+
+    Returns:
+        (healed_args, error_message):
+        - healed_args is always a usable dict (best-effort repair).
+        - error_message is set only when the call cannot proceed (e.g. missing required field).
+          When set, the caller should return the error to the LLM for retry.
+    """
+    if tool_name == "web_search":
+        return _heal_web_search(args)
+    if tool_name == "web_get":
+        return _heal_web_get(args)
+    if tool_name == "final_answer":
+        return _heal_final_answer(args)
+    return args, f"Unknown tool: {tool_name}"
+
+
+def _heal_web_search(args: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+    """Heal web_search arguments — always produces a usable list of query strings."""
+    queries_raw = args.get("queries")
+    if not isinstance(queries_raw, list):
+        return {"queries": []}, "'queries' must be a list"
+
+    queries: list[str] = []
+    for q in queries_raw:
+        if isinstance(q, str) and q.strip():
+            queries.append(q.strip())
+        elif isinstance(q, dict):
+            # Common LLM hallucination: {"query": "..."} instead of plain string
+            extracted = (
+                q.get("query")
+                or q.get("text")
+                or q.get("q")
+                or q.get("keyword")
+                or ""
+            )
+            if isinstance(extracted, str) and extracted.strip():
+                queries.append(extracted.strip())
+            else:
+                queries.append(str(q))
+        else:
+            queries.append(str(q))
+
+    if not queries:
+        return {**args, "queries": []}, "'queries' must contain at least one non-empty string"
+
+    return {**args, "queries": queries}, None
+
+
+def _heal_web_get(args: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+    """Heal web_get arguments — always produces usable urls/instructions/flags."""
+    result = dict(args)
+
+    # ----- urls (required, list[str]) -----
+    urls_raw = result.get("urls")
+    if not isinstance(urls_raw, list):
+        return {**result, "urls": []}, "'urls' must be a list"
+
+    healed_urls: list[str] = []
+    for u in urls_raw:
+        if isinstance(u, str) and u.strip():
+            healed_urls.append(u.strip())
+        elif isinstance(u, dict):
+            # Common LLM hallucination: {"url": "..."} instead of plain string
+            extracted = u.get("url") or u.get("link") or u.get("uri") or ""
+            if isinstance(extracted, str) and extracted.strip():
+                healed_urls.append(extracted.strip())
+        else:
+            url_str = str(u).strip()
+            if url_str:
+                healed_urls.append(url_str)
+
+    if not healed_urls:
+        return {**result, "urls": []}, "'urls' must contain at least one valid URL"
+    result["urls"] = healed_urls
+
+    # ----- instructions (optional, str) -----
+    instructions = result.get("instructions")
+    if instructions is not None and not isinstance(instructions, str):
+        result["instructions"] = str(instructions)
+    elif instructions is None:
+        result.pop("instructions", None)
+
+    # ----- get_full (optional, bool) -----
+    get_full = result.get("get_full")
+    if get_full is not None and not isinstance(get_full, bool):
+        result["get_full"] = bool(get_full)
+    elif get_full is None:
+        result.pop("get_full", None)
+
+    # ----- use_chunks (optional, bool) -----
+    use_chunks = result.get("use_chunks")
+    if use_chunks is not None and not isinstance(use_chunks, bool):
+        result["use_chunks"] = bool(use_chunks)
+    elif use_chunks is None:
+        result.pop("use_chunks", None)
+
+    return result, None
+
+
+def _heal_final_answer(args: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+    """Heal final_answer arguments — always returns a usable answer string."""
+    answer = args.get("answer", "No answer provided")
+    if isinstance(answer, str):
+        return {**args, "answer": answer}, None
+
+    if isinstance(answer, dict):
+        # LLM sometimes nests the answer in sub-fields
+        extracted = (
+            answer.get("answer")
+            or answer.get("text")
+            or answer.get("content")
+            or answer.get("response")
+            or str(answer)
+        )
+        return {**args, "answer": str(extracted)}, None
+
+    return {**args, "answer": str(answer)}, None
+
+
 def _response_text(response: Any) -> str:
     """Extract assistant text from an LLM response."""
     return response.choices[0].message.content or ""
@@ -404,6 +530,11 @@ async def execute_tool(
     url_titles: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Execute a tool by name."""
+    # Self-heal arguments — never crash on malformed LLM output
+    tool_args, heal_error = heal_tool_args(tool_name, tool_args)
+    if heal_error:
+        return {"error": f"Invalid {tool_name} arguments: {heal_error}"}
+
     if tool_name == "web_search":
         queries = tool_args.get("queries", [])
         return await web_search(queries, config, verbose)

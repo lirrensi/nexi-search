@@ -13,7 +13,7 @@ from nexi.backends.orchestrators import ProviderChainError, run_llm_chain
 from nexi.compaction import compact_conversation, should_compact
 from nexi.config import EFFORT_LEVELS, INTERNAL_LLM_MAX_TOKENS, Config, get_system_prompt
 from nexi.token_counter import count_messages_tokens, estimate_page_tokens
-from nexi.tools import TOOLS, clear_url_cache, close_http_client, execute_tool
+from nexi.tools import TOOLS, clear_url_cache, close_http_client, execute_tool, heal_tool_args
 
 
 @dataclass
@@ -97,7 +97,13 @@ async def _request_final_answer(
                 return message.content or "No answer provided"
 
             tool_name = function_data.name
-            tool_args = json.loads(function_data.arguments)
+            # Parse arguments with fallback for malformed JSON
+            try:
+                tool_args = json.loads(function_data.arguments)
+            except json.JSONDecodeError:
+                tool_args = {}
+            # Self-heal arguments — never crash on malformed LLM output
+            tool_args, _heal_error = heal_tool_args(tool_name, tool_args)
 
             if tool_name == "final_answer":
                 return tool_args.get("answer", "No answer provided")
@@ -307,30 +313,38 @@ async def run_search(
                 if verbose:
                     report_progress(f"Tool: {tool_name} | Args: {tool_args}", current_iteration)
 
+                # Self-heal arguments — never crash on malformed LLM output
+                tool_args, heal_error = heal_tool_args(tool_name, tool_args)
+                if heal_error and verbose:
+                    print(f"[Warning] Healed {tool_name} arguments: {heal_error}")
+
                 # Execute tool
                 if tool_name == "final_answer":
-                    final_answer = tool_args.get("answer", "")
+                    final_answer = tool_args.get("answer", "No answer provided")
                     report_progress("Answer ready!", current_iteration)
                     break
 
                 elif tool_name == "web_search":
                     queries = tool_args.get("queries", [])
-                    report_progress(
-                        f"Searching for: {', '.join(queries)}",
-                        current_iteration,
-                    )
-                    result = await _await_with_heartbeat(
-                        execute_tool(
-                            tool_name,
-                            tool_args,
-                            config,
-                            verbose,
-                            query=query,
-                        ),
-                        report_progress=report_progress,
-                        heartbeat_message="Running web_search",
-                        iteration=current_iteration,
-                    )
+                    if heal_error:
+                        result = {"error": f"Invalid web_search arguments: {heal_error}"}
+                    else:
+                        report_progress(
+                            f"Searching for: {', '.join(queries)}",
+                            current_iteration,
+                        )
+                        result = await _await_with_heartbeat(
+                            execute_tool(
+                                tool_name,
+                                tool_args,
+                                config,
+                                verbose,
+                                query=query,
+                            ),
+                            report_progress=report_progress,
+                            heartbeat_message="Running web_search",
+                            iteration=current_iteration,
+                        )
 
                     if verbose:
                         print(
@@ -379,15 +393,18 @@ async def run_search(
 
                 elif tool_name == "web_get":
                     urls = tool_args.get("urls", [])
-                    report_progress(f"Reading {len(urls)} pages...", current_iteration)
+                    if heal_error:
+                        result = {"error": f"Invalid web_get arguments: {heal_error}"}
+                    else:
+                        report_progress(f"Reading {len(urls)} pages...", current_iteration)
 
-                    # Get citation numbers for URLs BEFORE fetching (stable numbering)
-                    url_numbers = {url: get_url_number(url) for url in urls}
+                        # Get citation numbers for URLs BEFORE fetching (stable numbering)
+                        url_numbers = {url: get_url_number(url) for url in urls}
 
-                    result = await _await_with_heartbeat(
-                        execute_tool(
-                            tool_name,
-                            tool_args,
+                        result = await _await_with_heartbeat(
+                            execute_tool(
+                                tool_name,
+                                tool_args,
                             config,
                             verbose,
                             query=query,
