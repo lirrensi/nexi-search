@@ -52,14 +52,17 @@ def count_tokens(text: str, encoding: str = "cl100k_base") -> int:
         encoding: tiktoken encoding name (default: cl100k_base)
 
     Returns:
-        Number of tokens in the text
+        Number of tokens in the text (0 on failure)
     """
     if not text:
         return 0
 
-    enc = get_encoding(encoding)
-    tokens = enc.encode(text)
-    return len(tokens)
+    try:
+        enc = get_encoding(encoding)
+        tokens = enc.encode(text)
+        return len(tokens)
+    except Exception:
+        return 0
 
 
 def count_messages_tokens(messages: list[dict[str, Any]], encoding: str = "cl100k_base") -> int:
@@ -70,49 +73,52 @@ def count_messages_tokens(messages: list[dict[str, Any]], encoding: str = "cl100
         encoding: tiktoken encoding name (default: cl100k_base)
 
     Returns:
-        Total token count for all messages
+        Total token count for all messages (0 on failure)
     """
     if not messages:
         return 0
 
-    enc = get_encoding(encoding)
-    total_tokens = 0
+    try:
+        enc = get_encoding(encoding)
+        total_tokens = 0
 
-    for message in messages:
-        # Count role
-        role = message.get("role", "")
-        total_tokens += len(enc.encode(role))
+        for message in messages:
+            # Count role
+            role = message.get("role", "")
+            total_tokens += len(enc.encode(role))
 
-        # Count content if present
-        content = message.get("content")
-        if content is not None:
-            total_tokens += len(enc.encode(str(content)))
+            # Count content if present
+            content = message.get("content")
+            if content is not None:
+                total_tokens += len(enc.encode(str(content)))
 
-        # Count tool_calls if present
-        tool_calls = message.get("tool_calls")
-        if tool_calls:
-            for tool_call in tool_calls:
-                # Count tool_call id
-                tool_call_id = tool_call.get("id", "")
+            # Count tool_calls if present
+            tool_calls = message.get("tool_calls")
+            if tool_calls:
+                for tool_call in tool_calls:
+                    # Count tool_call id
+                    tool_call_id = tool_call.get("id", "")
+                    total_tokens += len(enc.encode(tool_call_id))
+
+                    # Count function name and arguments
+                    function = tool_call.get("function", {})
+                    if function:
+                        func_name = function.get("name", "")
+                        func_args = function.get("arguments", "")
+                        total_tokens += len(enc.encode(func_name))
+                        total_tokens += len(enc.encode(func_args))
+
+            # Count tool_call_id if present (for tool messages)
+            tool_call_id = message.get("tool_call_id")
+            if tool_call_id:
                 total_tokens += len(enc.encode(tool_call_id))
 
-                # Count function name and arguments
-                function = tool_call.get("function", {})
-                if function:
-                    func_name = function.get("name", "")
-                    func_args = function.get("arguments", "")
-                    total_tokens += len(enc.encode(func_name))
-                    total_tokens += len(enc.encode(func_args))
+            # Add 3 tokens per message for formatting (OpenAI convention)
+            total_tokens += 3
 
-        # Count tool_call_id if present (for tool messages)
-        tool_call_id = message.get("tool_call_id")
-        if tool_call_id:
-            total_tokens += len(enc.encode(tool_call_id))
-
-        # Add 3 tokens per message for formatting (OpenAI convention)
-        total_tokens += 3
-
-    return total_tokens
+        return total_tokens
+    except Exception:
+        return 0
 
 
 def estimate_page_tokens(content: str, encoding: str = "cl100k_base") -> int:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import httpx
 from openai import AsyncOpenAI
 
 
@@ -39,6 +40,7 @@ class OpenAICompatibleLLMProvider:
         client = AsyncOpenAI(
             base_url=config["base_url"],
             api_key=config["api_key"],
+            timeout=httpx.Timeout(90.0, connect=10.0),
         )
         request: dict[str, Any] = {
             "model": config["model"],

@@ -199,6 +199,42 @@ async def web_get(
     url_titles: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Fetch and process content from URLs using configured providers."""
+    try:
+        return await _web_get_impl(
+            urls=urls,
+            config=config,
+            verbose=verbose,
+            instructions=instructions,
+            get_full=get_full,
+            use_chunks=use_chunks,
+            query=query,
+            url_numbers=url_numbers,
+            url_titles=url_titles,
+        )
+    except Exception as exc:
+        if verbose:
+            print(f"[web_get] ❌ Unexpected error: {exc}")
+        return {
+            "pages": [
+                {"url": url, "error": f"Internal error: {exc}", "content": ""}
+                for url in urls
+            ],
+            "provider_failures": [],
+        }
+
+
+async def _web_get_impl(
+    urls: list[str],
+    config: Config,
+    verbose: bool = False,
+    instructions: str = "",
+    get_full: bool = False,
+    use_chunks: bool = False,
+    query: str = "",
+    url_numbers: dict[str, int] | None = None,
+    url_titles: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Internal implementation of web_get."""
     raw_result = await run_fetch_chain(urls, config, verbose)
     pages_by_url = {
         page["url"]: page
@@ -537,7 +573,18 @@ async def execute_tool(
 
     if tool_name == "web_search":
         queries = tool_args.get("queries", [])
-        return await web_search(queries, config, verbose)
+        try:
+            return await web_search(queries, config, verbose)
+        except Exception as exc:
+            if verbose:
+                print(f"[execute_tool] web_search error: {exc}")
+            return {
+                "searches": [
+                    {"query": q, "error": str(exc), "results": []}
+                    for q in queries
+                ],
+                "provider_failures": [],
+            }
     if tool_name == "web_get":
         urls = tool_args.get("urls", [])
         instructions = tool_args.get("instructions", "")

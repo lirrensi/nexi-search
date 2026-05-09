@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import time
 from collections.abc import Callable
@@ -38,14 +39,45 @@ async def _await_with_heartbeat(
     heartbeat_message: str,
     iteration: int,
     interval_s: float = 5.0,
+    max_total_s: float = 120.0,
 ) -> Any:
-    """Await an operation while emitting periodic progress heartbeats."""
+    """Await an operation while emitting periodic progress heartbeats.
+
+    Args:
+        awaitable: Coroutine to await.
+        report_progress: Progress callback.
+        heartbeat_message: Message to show on each heartbeat.
+        iteration: Current iteration number.
+        interval_s: Seconds between heartbeats.
+        max_total_s: Maximum total seconds to wait before cancelling and
+            raising TimeoutError. This is a safety net — the tool call
+            *must* complete or fail within this window.
+
+    Raises:
+        TimeoutError: If the operation exceeds max_total_s.
+    """
     task = asyncio.ensure_future(awaitable)
-    while True:
+    elapsed = 0.0
+    while elapsed < max_total_s:
         done, _pending = await asyncio.wait({task}, timeout=interval_s)
         if task in done:
             return await task
-        report_progress(f"{heartbeat_message} (still running)", iteration)
+        elapsed += interval_s
+        remaining = max_total_s - elapsed
+        report_progress(
+            f"{heartbeat_message} (still running, "
+            f"timeout in {remaining:.0f}s)" if remaining > 1 else
+            f"{heartbeat_message} (timeout imminent)",
+            iteration,
+        )
+
+    # Timeout reached — cancel the task and raise
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    raise TimeoutError(
+        f"{heartbeat_message} timed out after {max_total_s:.0f}s"
+    )
 
 
 async def _request_final_answer(
@@ -292,230 +324,254 @@ async def run_search(
 
             message = response.choices[0].message
 
-            # Check for tool calls
-            if message.tool_calls:
-                tool_call = message.tool_calls[0]
-                function_data = getattr(tool_call, "function", None)
-                if function_data is None:
-                    final_answer = message.content or "No answer provided"
-                    report_progress("Answer ready!", current_iteration)
-                    break
+            try:
+                # Check for tool calls
+                if message.tool_calls:
+                    tool_call = message.tool_calls[0]
+                    function_data = getattr(tool_call, "function", None)
+                    if function_data is None:
+                        final_answer = message.content or "No answer provided"
+                        report_progress("Answer ready!", current_iteration)
+                        break
 
-                tool_name = function_data.name
-                # Parse tool arguments with fallback for malformed JSON
-                try:
-                    tool_args = json.loads(function_data.arguments)
-                except json.JSONDecodeError:
-                    if verbose:
-                        print("[Warning] Malformed tool arguments, using empty dict")
-                    tool_args = {}
-
-                if verbose:
-                    report_progress(f"Tool: {tool_name} | Args: {tool_args}", current_iteration)
-
-                # Self-heal arguments — never crash on malformed LLM output
-                tool_args, heal_error = heal_tool_args(tool_name, tool_args)
-                if heal_error and verbose:
-                    print(f"[Warning] Healed {tool_name} arguments: {heal_error}")
-
-                # Execute tool
-                if tool_name == "final_answer":
-                    final_answer = tool_args.get("answer", "No answer provided")
-                    report_progress("Answer ready!", current_iteration)
-                    break
-
-                elif tool_name == "web_search":
-                    queries = tool_args.get("queries", [])
-                    if heal_error:
-                        result = {"error": f"Invalid web_search arguments: {heal_error}"}
-                    else:
-                        report_progress(
-                            f"Searching for: {', '.join(queries)}",
-                            current_iteration,
-                        )
-                        result = await _await_with_heartbeat(
-                            execute_tool(
-                                tool_name,
-                                tool_args,
-                                config,
-                                verbose,
-                                query=query,
-                            ),
-                            report_progress=report_progress,
-                            heartbeat_message="Running web_search",
-                            iteration=current_iteration,
-                        )
+                    tool_name = function_data.name
+                    # Parse tool arguments with fallback for malformed JSON
+                    try:
+                        tool_args = json.loads(function_data.arguments)
+                    except json.JSONDecodeError:
+                        if verbose:
+                            print("[Warning] Malformed tool arguments, using empty dict")
+                        tool_args = {}
 
                     if verbose:
-                        print(
-                            f"[Tool Result] web_search returned {len(result.get('searches', []))} results"
-                        )
-                        for search in result.get("searches", []):
-                            if "error" in search:
-                                print(f"  [ERROR] '{search.get('query')}': {search['error']}")
-                            else:
-                                print(
-                                    f"  [OK] '{search.get('query')}' returned {len(search.get('results', []))} results"
+                        report_progress(f"Tool: {tool_name} | Args: {tool_args}", current_iteration)
+
+                    # Self-heal arguments — never crash on malformed LLM output
+                    tool_args, heal_error = heal_tool_args(tool_name, tool_args)
+                    if heal_error and verbose:
+                        print(f"[Warning] Healed {tool_name} arguments: {heal_error}")
+
+                    # Execute tool
+                    if tool_name == "final_answer":
+                        final_answer = tool_args.get("answer", "No answer provided")
+                        report_progress("Answer ready!", current_iteration)
+                        break
+
+                    elif tool_name == "web_search":
+                        queries = tool_args.get("queries", [])
+                        if heal_error:
+                            result = {"error": f"Invalid web_search arguments: {heal_error}"}
+                        else:
+                            report_progress(
+                                f"Searching for: {', '.join(queries)}",
+                                current_iteration,
+                            )
+                            try:
+                                result = await _await_with_heartbeat(
+                                    execute_tool(
+                                        tool_name,
+                                        tool_args,
+                                        config,
+                                        verbose,
+                                        query=query,
+                                    ),
+                                    report_progress=report_progress,
+                                    heartbeat_message="Running web_search",
+                                    iteration=current_iteration,
                                 )
+                            except TimeoutError as exc:
+                                result = {"error": str(exc)}
 
-                    # Capture titles from search results for citations
-                    for search_result in result.get("searches", []):
-                        for item in search_result.get("results", []):
-                            if "url" in item:
-                                url = item["url"]
-                                if "title" in item:
-                                    url_to_title[url] = item["title"]
-
-                    # Add tool result to conversation
-                    messages.append(
-                        {
-                            "role": "assistant",
-                            "content": None,
-                            "tool_calls": [
-                                {
-                                    "id": tool_call.id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": tool_name,
-                                        "arguments": function_data.arguments,
-                                    },
-                                }
-                            ],
-                        }
-                    )
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": json.dumps(result),
-                        }
-                    )
-
-                elif tool_name == "web_get":
-                    urls = tool_args.get("urls", [])
-                    if heal_error:
-                        result = {"error": f"Invalid web_get arguments: {heal_error}"}
-                    else:
-                        report_progress(f"Reading {len(urls)} pages...", current_iteration)
-
-                        # Get citation numbers for URLs BEFORE fetching (stable numbering)
-                        url_numbers = {url: get_url_number(url) for url in urls}
-
-                        result = await _await_with_heartbeat(
-                            execute_tool(
-                                tool_name,
-                                tool_args,
-                            config,
-                            verbose,
-                            query=query,
-                            url_numbers=url_numbers,  # Pass URL numbers for citation markers
-                            url_titles=url_to_title,  # Pass URL titles for sources list
-                        ),
-                        report_progress=report_progress,
-                        heartbeat_message="Running web_get",
-                        iteration=current_iteration,
-                    )
-
-                    if verbose:
-                        print(
-                            f"[Tool Result] web_get returned {len(result.get('pages', []))} pages"
-                        )
-                        for page in result.get("pages", []):
-                            if "error" in page:
-                                print(f"  [ERROR] '{page.get('url')}': {page['error']}")
-                            else:
-                                content_len = len(page.get("content", ""))
-                                print(f"  [OK] '{page.get('url')}' fetched {content_len} chars")
-
-                    # Estimate tokens for tool result
-                    estimated_tokens = estimate_page_tokens(
-                        json.dumps(result), config.tokenizer_encoding
-                    )
-
-                    # Check if compaction needed
-                    if should_compact(current_tokens, estimated_tokens, config):
-                        threshold = int(config.max_context * config.auto_compact_thresh)
                         if verbose:
                             print(
-                                f"[Compaction] Triggered: {current_tokens} + {estimated_tokens} > {threshold}"
+                                f"[Tool Result] web_search returned {len(result.get('searches', []))} results"
                             )
+                            for search in result.get("searches", []):
+                                if "error" in search:
+                                    print(f"  [ERROR] '{search.get('query')}': {search['error']}")
+                                else:
+                                    print(
+                                        f"  [OK] '{search.get('query')}' returned {len(search.get('results', []))} results"
+                                    )
 
-                        messages = await compact_conversation(
-                            messages=messages,
-                            original_query=query,
-                            config=config,
-                            verbose=verbose,
+                        # Capture titles from search results for citations
+                        for search_result in result.get("searches", []):
+                            for item in search_result.get("results", []):
+                                if "url" in item:
+                                    url = item["url"]
+                                    if "title" in item:
+                                        url_to_title[url] = item["title"]
+
+                        # Add tool result to conversation
+                        messages.append(
+                            {
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [
+                                    {
+                                        "id": tool_call.id,
+                                        "type": "function",
+                                        "function": {
+                                            "name": tool_name,
+                                            "arguments": function_data.arguments,
+                                        },
+                                    }
+                                ],
+                            }
+                        )
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tool_call.id,
+                                "content": json.dumps(result),
+                            }
                         )
 
-                        current_tokens = count_messages_tokens(messages, config.tokenizer_encoding)
+                    elif tool_name == "web_get":
+                        urls = tool_args.get("urls", [])
+                        if heal_error:
+                            result = {"error": f"Invalid web_get arguments: {heal_error}"}
+                        else:
+                            report_progress(f"Reading {len(urls)} pages...", current_iteration)
 
-                        # Check if still over limit
-                        if current_tokens > config.max_context:
+                            # Get citation numbers for URLs BEFORE fetching (stable numbering)
+                            url_numbers = {url: get_url_number(url) for url in urls}
+
+                            try:
+                                result = await _await_with_heartbeat(
+                                    execute_tool(
+                                        tool_name,
+                                        tool_args,
+                                        config,
+                                        verbose,
+                                        query=query,
+                                        url_numbers=url_numbers,  # Pass URL numbers for citation markers
+                                        url_titles=url_to_title,  # Pass URL titles for sources list
+                                    ),
+                                    report_progress=report_progress,
+                                    heartbeat_message="Running web_get",
+                                    iteration=current_iteration,
+                                )
+                            except TimeoutError as exc:
+                                result = {"error": str(exc)}
+
+                        if verbose:
+                            print(
+                                f"[Tool Result] web_get returned {len(result.get('pages', []))} pages"
+                            )
+                            for page in result.get("pages", []):
+                                if "error" in page:
+                                    print(f"  [ERROR] '{page.get('url')}': {page['error']}")
+                                else:
+                                    content_len = len(page.get("content", ""))
+                                    print(f"  [OK] '{page.get('url')}' fetched {content_len} chars")
+
+                        # Estimate tokens for tool result
+                        estimated_tokens = estimate_page_tokens(
+                            json.dumps(result), config.tokenizer_encoding
+                        )
+
+                        # Check if compaction needed
+                        if should_compact(current_tokens, estimated_tokens, config):
+                            threshold = int(config.max_context * config.auto_compact_thresh)
                             if verbose:
                                 print(
-                                    f"[Compaction] ❌ Still over limit: {current_tokens} > {config.max_context}"
+                                    f"[Compaction] Triggered: {current_tokens} + {estimated_tokens} > {threshold}"
                                 )
-                            final_answer = _force_answer(messages, "Context limit exceeded")
-                            break
 
-                    # Track URLs
-                    urls_fetched.update(urls)
+                            messages = await compact_conversation(
+                                messages=messages,
+                                original_query=query,
+                                config=config,
+                                verbose=verbose,
+                            )
 
-                    # Add tool result to conversation
-                    messages.append(
-                        {
-                            "role": "assistant",
-                            "content": None,
-                            "tool_calls": [
-                                {
-                                    "id": tool_call.id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": tool_name,
-                                        "arguments": function_data.arguments,
-                                    },
-                                }
-                            ],
-                        }
-                    )
-                    # Update result with current sources list for the model to see
-                    result = update_tool_result_with_sources(result)
+                            current_tokens = count_messages_tokens(messages, config.tokenizer_encoding)
 
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": json.dumps(result),
-                        }
-                    )
+                            # Check if still over limit
+                            if current_tokens > config.max_context:
+                                if verbose:
+                                    print(
+                                        f"[Compaction] ❌ Still over limit: {current_tokens} > {config.max_context}"
+                                    )
+                                final_answer = _force_answer(messages, "Context limit exceeded")
+                                break
 
-            else:
-                # No tool call - model should have used final_answer
-                # Force an answer, but filter out tool call-like content
-                content = message.content or "No answer provided"
-                # Filter out tool call-like content that should not be visible
-                if "<tool call" in content or "<function_calls>" in content:
-                    # Model misbehaved - returning tool call text instead of using tools
-                    if verbose:
-                        print("[Warning] Model returned tool call text instead of using tools")
-                    # Try to extract actual answer content after tool call markers
-                    lines_list = content.split(chr(10))
-                    answer_lines = []
-                    in_tool_call = False
-                    for line in lines_list:
-                        if "<tool call" in line or "<function_calls>" in line:
-                            in_tool_call = True
-                        elif in_tool_call and (">" in line or "</" in line):
-                            # End of tool call block
-                            if "</tool" in line or "</function_calls>" in line:
-                                in_tool_call = False
-                        elif not in_tool_call and line.strip():
-                            answer_lines.append(line)
-                    final_answer = chr(10).join(answer_lines).strip() or "No answer provided"
+                        # Track URLs
+                        urls_fetched.update(urls)
+
+                        # Add tool result to conversation
+                        messages.append(
+                            {
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [
+                                    {
+                                        "id": tool_call.id,
+                                        "type": "function",
+                                        "function": {
+                                            "name": tool_name,
+                                            "arguments": function_data.arguments,
+                                        },
+                                    }
+                                ],
+                            }
+                        )
+                        # Update result with current sources list for the model to see
+                        result = update_tool_result_with_sources(result)
+
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tool_call.id,
+                                "content": json.dumps(result),
+                            }
+                        )
+
                 else:
-                    final_answer = content
-                report_progress("Answer ready!", current_iteration)
-                break
+                    # No tool call - model should have used final_answer
+                    # Force an answer, but filter out tool call-like content
+                    content = message.content or "No answer provided"
+                    # Filter out tool call-like content that should not be visible
+                    if "<tool call" in content or "<function_calls>" in content:
+                        # Model misbehaved - returning tool call text instead of using tools
+                        if verbose:
+                            print("[Warning] Model returned tool call text instead of using tools")
+                        # Try to extract actual answer content after tool call markers
+                        lines_list = content.split(chr(10))
+                        answer_lines = []
+                        in_tool_call = False
+                        for line in lines_list:
+                            if "<tool call" in line or "<function_calls>" in line:
+                                in_tool_call = True
+                            elif in_tool_call and (">" in line or "</" in line):
+                                # End of tool call block
+                                if "</tool" in line or "</function_calls>" in line:
+                                    in_tool_call = False
+                            elif not in_tool_call and line.strip():
+                                answer_lines.append(line)
+                        final_answer = chr(10).join(answer_lines).strip() or "No answer provided"
+                    else:
+                        final_answer = content
+                    report_progress("Answer ready!", current_iteration)
+                    break
+
+            except Exception as exc:
+                # Iteration-level safety net — nothing kills the search here
+                if verbose:
+                    print(f"[ERROR] Iteration {current_iteration} failed unexpectedly: {exc}")
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            f"System note: an internal error occurred while processing "
+                            f"iteration {current_iteration}: {exc}. "
+                            f"Please continue with a different approach or the "
+                            f"information gathered so far."
+                        ),
+                    }
+                )
+                continue
 
         else:
             # Max iterations reached - enter final stage
@@ -555,9 +611,12 @@ async def run_search(
 def _get_tool_schemas() -> list[dict[str, Any]]:
     """Get tool schemas for OpenAI function calling.
 
-    Returns the TOOLS constant from tools.py to avoid duplication.
+    Returns a deep copy of the TOOLS constant to prevent any accidental
+    mutation from persisting across search invocations.
     """
-    return TOOLS
+    from copy import deepcopy
+
+    return deepcopy(TOOLS)
 
 
 def _force_answer(messages: list[dict[str, Any]], reason: str) -> str:
@@ -625,6 +684,8 @@ def run_search_sync(
             )
         )
     finally:
-        # Close HTTP client to release connections
-        loop.run_until_complete(close_http_client())
-        loop.close()
+        # Close HTTP client to release connections (never crash the caller)
+        with contextlib.suppress(Exception):
+            loop.run_until_complete(close_http_client())
+        with contextlib.suppress(Exception):
+            loop.close()
