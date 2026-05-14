@@ -6,6 +6,7 @@ from typing import Any
 
 import httpx
 
+from nexi.backends.api_keys import normalize_api_keys, validate_api_keys
 from nexi.backends.http_client import get_http_client
 
 BASE_URL = "https://serpapi.com/search.json"
@@ -18,9 +19,9 @@ class SerpAPISearchProvider:
 
     def validate_config(self, config: dict[str, Any]) -> None:
         """Validate SerpAPI search config."""
-        api_key = config.get("api_key")
-        if not isinstance(api_key, str) or not api_key.strip():
-            raise ValueError("SerpAPI api_key must be a non-empty string")
+        validate_api_keys(config, "SerpAPI")
+        if not normalize_api_keys(config):
+            raise ValueError("SerpAPI api_key must be a non-empty string or list")
 
     async def search(
         self,

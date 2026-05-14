@@ -23,10 +23,13 @@ NEXI is an intelligent research CLI that uses an agentic search loop powered by 
 **This system owns**:
 - Agentic search loop orchestration
 - Provider orchestration for LLM, web search, and web fetch
+- Multi-key API key management with fallback and round-robin strategies
+- Custom Python provider loading from the config directory
 - Conversation context management and compaction
 - Citation tracking and formatting
 - CLI interface and history management
-- Direct `nexi-search` and `nexi-fetch` binaries
+- Direct `nexi-search` and `nexi-fetch` binaries with provider override support
+- Config readiness checking (`nexi doctor`) for all public surfaces
 - MCP server for tool integration
 
 **This system does NOT own**:
@@ -54,6 +57,8 @@ NEXI is an intelligent research CLI that uses an agentic search loop powered by 
 | `questionary` | ^2.x | Interactive prompts |
 | `rich` | ^13.x | Terminal output formatting |
 | `tiktoken` | ^0.5+ | Token counting |
+| `beautifulsoup4` | ^4.x | HTML parsing (snitchmd fallback) |
+| `fastmcp` | (optional) | MCP server runtime |
 
 ### External Services
 
@@ -70,66 +75,106 @@ NEXI is an intelligent research CLI that uses an agentic search loop powered by 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                         CLI Interface                            │
-│  (nexi/cli.py, direct search/fetch entrypoints, main.py)        │
+│  (nexi/cli.py, nexi/search_cli.py, nexi/fetch_cli.py,           │
+│   nexi/mcp_server_cli.py, main.py, nexi/__main__.py)            │
 └────────────────────┬────────────────────────────────────────────┘
                      │
                      ├─────────────────────────────────────────────┐
                      │                                             │
                      ▼                                             ▼
-┌──────────────────────────────┐              ┌──────────────────────────────────┐
-│   Configuration Management   │              │      History Management          │
-│   (nexi/config.py)           │              │      (nexi/history.py)           │
-│                              │              │                                  │
-│  - Load/Save Config          │              │  - JSONL Storage                 │
-│  - Provider Validation       │              │  - Entry Creation/Retrieval      │
-│  - Prompt Templates          │              │  - Formatting                    │
-│  - Ordered Chains            │              │                                  │
-└──────────────────────────────┘              └──────────────────────────────────┘
+┌──────────────────────────────────┐              ┌──────────────────────────────┐
+│   Configuration Management       │              │  Config Readiness & Onboard │
+│   (nexi/config.py + template)    │              │  (nexi/config_doctor.py,    │
+│   (nexi/config_template.py)      │              │   nexi/onboard.py)          │
+│                                  │              │                              │
+│  - Load/Save Config              │              │  - Doctor checks per command │
+│  - Provider Validation           │              │  - Interactive onboarding   │
+│  - Prompt Templates              │              │  - Provider override helper │
+│  - TOML template rendering       │              │    (nexi/direct_provider.py) │
+└──────────────────────────────────┘              └──────────────────────────────┘
                      │
-                     ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    Search Engine Core                           │
-│                    (nexi/search.py)                             │
-│                                                                  │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │              Agentic Search Loop                         │  │
-│  │                                                           │  │
-│  │  1. Call LLM through llm_backends                        │  │
-│  │  2. Parse tool_calls                                     │  │
-│  │  3. Execute tools (web_search, web_get, final_answer)    │  │
-│  │  4. Add results to conversation                          │  │
-│  │  5. Check internal guard rails (effort, context)         │  │
-│  │  6. Compact if needed                                    │  │
-│  │  7. Repeat until final_answer or graceful finalization   │  │
-│  └──────────────────────────────────────────────────────────┘  │
-└────────────────────┬────────────────────────────────────────────┘
+                     ├─────────────────────────────────────────────┐
+                     │                                             │
+                     ▼                                             ▼
+┌──────────────────────────────────┐              ┌──────────────────────────────┐
+│   Search Engine Core             │              │  History Management          │
+│   (nexi/search.py)               │              │  (nexi/history.py)           │
+│                                  │              │                              │
+│  ┌──────────────────────────┐    │              │  - JSONL Storage             │
+│  │   Agentic Search Loop    │    │              │  - Entry Creation/Retrieval  │
+│  │                          │    │              │  - Formatting                │
+│  │ 1. Call LLM through      │    │              └──────────────────────────────┘
+│  │    llm_backends          │    │
+│  │ 2. Parse tool_calls      │    │
+│  │ 3. Execute tools         │    │
+│  │ 4. Add results to conv   │    │
+│  │ 5. Check guard rails     │    │
+│  │ 6. Compact if needed     │    │
+│  │ 7. Repeat until done     │    │
+│  └──────────────────────────┘    │
+└────────────────────┬─────────────┘
                      │
-         ┌───────────┼───────────┬───────────────┐
-         │           │           │               │
-         ▼           ▼           ▼               ▼
-┌──────────────┐ ┌──────────┐ ┌──────────────┐ ┌──────────────┐
-│   Tools      │ │Citations │ │  Compaction  │ │ Token Counter│
-│(nexi/tools.py)│ │(nexi/    │ │(nexi/        │ │(nexi/token_  │
-│              │ │citations │ │compaction.py)│ │counter.py)   │
-│- web_search  │ │.py)      │ │              │ │              │
-│- web_get     │ │          │ │- Extract     │ │- count_tokens│
-│- final_answer│ │- Track   │ │- Summarize   │ │- count_msgs  │
-│              │ │- Format  │ │- Rebuild     │ │- estimate    │
-│- Orchestrators││- Detect  │ │              │ │              │
-└──────────────┘ └──────────┘ └──────────────┘ └──────────────┘
+         ┌───────────┼───────────┬───────────────┬───────────────┐
+         │           │           │               │               │
+         ▼           ▼           ▼               ▼               ▼
+┌──────────────┐ ┌──────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+│   Tools      │ │Citations │ │  Compaction  │ │ Token Counter│ │Runtime Noise │
+│(nexi/tools.py)│ │(nexi/    │ │(nexi/        │ │(nexi/token_  │ │(nexi/runtime │
+│              │ │citations │ │compaction.py)│ │counter.py)   │ │_noise.py)    │
+│- execute_tool│ │.py)      │ │              │ │              │ │              │
+│- heal_tool   │ │          │ │- Extract     │ │- count_tokens│ │- Suppress    │
+│  _args       │ │- Track   │ │- Summarize   │ │- count_msgs  │ │  warnings    │
+│- Chunk /     │ │- Format  │ │- Rebuild     │ │- estimate    │ │- Quiet mode  │
+│  extraction  │ │- Detect  │ │              │ │              │ │              │
+└──────────────┘ └──────────┘ └──────────────┘ └──────────────┘ └──────────────┘
          │
          ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                         Backend Provider Layer                               │
+│  (nexi/backends/)                                                             │
+│                                                                               │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌───────────────────────────────┐ │
+│  │ Provider Registry│  │ Orchestrators   │  │ API Keys Module               │ │
+│  │ (registry.py)    │  │ (orchestrators  │  │ (api_keys.py)                 │ │
+│  │                  │  │  .py)           │  │                               │ │
+│  │ - Search registry│  │                 │  │ - Key normalization           │ │
+│  │ - Fetch registry │  │ - run_search_   │  │ - Multi-key validation        │ │
+│  │ - LLM registry   │  │   chain()       │  │ - Fallback strategy           │ │
+│  │ - Custom provider │  │ - run_fetch_    │  │ - Round-robin strategy        │ │
+│  │   loader         │  │   chain()       │  │ - Per-attempt config building │ │
+│  └─────────────────┘  │ - run_llm_      │  └───────────────────────────────┘ │
+│                        │   chain()        │                                   │
+│                        └─────────────────┘                                   │
+│                                                                               │
+│  ┌─────────────────────────────────────────────────────────────────────────┐ │
+│  │  Provider Implementations                                                │ │
+│  │                                                                          │ │
+│  │  LLM Providers:     openai_compatible.py                                 │ │
+│  │                                                                          │ │
+│  │  Search Providers:  jina.py, searxng.py, brave.py, serpapi.py,          │ │
+│  │                     serper.py, perplexity_search.py, exa.py,             │ │
+│  │                     firecrawl.py, linkup.py, tavily.py                   │ │
+│  │                                                                          │ │
+│  │  Fetch Providers:   special_fetch.py, markdown_new.py, snitchmd.py,      │ │
+│  │                     crawl4ai.py, jina.py, exa.py, firecrawl.py,          │ │
+│  │                     linkup.py, tavily.py                                 │ │
+│  │                                                                          │ │
+│  │  Custom:            custom_python.py (provider-<file> type)              │ │
+│  └─────────────────────────────────────────────────────────────────────────┘ │
+└────────────────────────────────┬─────────────────────────────────────────────┘
+                                 │
+                                 ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                     External Services                           │
 │                                                                  │
-│  ┌──────────────────────┐      ┌──────────────────────────────┐ │
-│  │   LLM Providers      │      │   Search / Fetch Providers   │ │
-│  │   (ordered chain)    │      │   (ordered chains)           │ │
-│  │                      │      │                              │ │
-│  │  - Chat Completions  │      │  - Search APIs               │ │
-│  │  - Function Calling  │      │  - Reader / Extraction APIs  │ │
-│  │  - Provider Failover │      │  - Provider Failover         │ │
-│  └──────────────────────┘      └──────────────────────────────┘ │
+│  - OpenAI-compatible APIs (OpenRouter, OpenAI, local)          │
+│  - Jina AI (search + reader)                                   │
+│  - SearXNG (self-hosted search)                                │
+│  - Brave, SerpAPI, Serper, Perplexity (search)                 │
+│  - Exa, Firecrawl, Linkup, Tavily (search + fetch)            │
+│  - SnitchMD (Docker-backed rendered-page fetch)                │
+│  - Crawl4AI (local JS-rendered fetch)                          │
+│  - Trafilatura / Playwright / markdown_new (zero-key fetches)  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -137,21 +182,31 @@ NEXI is an intelligent research CLI that uses an agentic search loop powered by 
 
 ## Module Breakdown
 
-### 1. CLI Interface (`nexi/cli.py`, `main.py`, `nexi/__main__.py`, direct search/fetch entrypoints)
+### 1. CLI Interface (`nexi/cli.py`, `nexi/search_cli.py`, `nexi/fetch_cli.py`, `main.py`, `nexi/__main__.py`)
 
 **Purpose**: Entry points for command-line interaction
 
 **Runtime Surfaces**:
-- `nexi`: Full agentic workflow with search loop, citations, history, and MCP-facing behavior
-- `nexi-search`: Direct search CLI that exposes backend-orchestrated search without the agent loop
-- `nexi-fetch`: Direct fetch CLI that exposes backend-orchestrated fetch/extraction without the agent loop
+- `nexi` (`cli.py`): Full agentic workflow with search loop, citations, history, and MCP-facing behavior
+- `nexi-search` (`search_cli.py`): Direct search CLI that exposes backend-orchestrated search without the agent loop
+- `nexi-fetch` (`fetch_cli.py`): Direct fetch CLI that exposes backend-orchestrated fetch/extraction without the agent loop
 
-**Key Functions**:
-- `main()`: Click-based CLI command handler for `nexi`
-- `_run_search_command()`: Orchestrates full search execution
+**Key Functions** (`nexi/cli.py`):
+- `main()`: Click-based CLI command handler for `nexi` with subcommand support
+- `_run_search_command()`: Orchestrates full search execution with readiness checks
 - `_interactive_mode()`: REPL for continuous queries with multi-turn support
 - `_show_last_n()`, `_show_prev()`, `_show_by_id()`: History viewing
-- Direct search/fetch entrypoints: Parse args, invoke orchestration layer, print plain text or JSON
+- Subcommands: `config`, `init`, `doctor`, `clean`, `onboard`
+
+**Key Functions** (`nexi/search_cli.py`):
+- `main()`: Click command for `nexi-search` with `--json`, `--provider`, `-v` flags
+- `_format_search_payload()`: Formats search results for human-readable output
+- `_all_searches_failed()`: Determines exit code
+
+**Key Functions** (`nexi/fetch_cli.py`):
+- `main()`: Click command for `nexi-fetch` with `--json`, `--provider`, `--full`, `--chunks`, `--instructions`, `-v` flags
+- `_format_fetch_payload()`: Formats fetch results for human-readable output
+- `_all_pages_failed()`: Determines exit code
 
 **Features**:
 - Argument parsing (query, effort, verbose, plain)
@@ -160,6 +215,9 @@ NEXI is an intelligent research CLI that uses an agentic search loop powered by 
 - History management commands
 - Config lifecycle commands: `config`, `init`, `onboard`, `doctor`, `clean`
 - `--json` output mode for `nexi-search` and `nexi-fetch`
+- `--provider NAME` override to bypass the configured chain and use one named provider
+- Runtime noise control via `nexi/runtime_noise.py` (suppress warnings in quiet mode)
+- Readiness checking via `nexi/config_doctor.py` before execution
 - stdout-first design so shell redirection/piping handles file output
 
 **Multi-Turn Support**:
@@ -174,9 +232,9 @@ NEXI is an intelligent research CLI that uses an agentic search loop powered by 
 
 ---
 
-### 2. Configuration Management (`nexi/config.py`)
+### 2. Configuration Management (`nexi/config.py`, `nexi/config_template.py`)
 
-**Purpose**: Load, validate, and manage user configuration
+**Purpose**: Load, validate, manage user configuration, and render the default TOML template
 
 **Storage Layout**:
 - Config directory: `~/.config/nexi/`
@@ -208,36 +266,36 @@ class Config:
 - `providers` is the shared config registry for all provider instances
 - Each top-level chain (`llm_backends`, `search_backends`, `fetch_backends`) references provider instance names defined in `providers`
 - Each provider config object MUST include `type` so the registry can resolve the correct adapter class
-- A provider config object MAY include `api_key`, `base_url`, `model`, headers, rate limits, or provider-specific tuning knobs
+- A provider config object MAY include `api_key`, `api_key_strategy`, `base_url`, `model`, headers, rate limits, or provider-specific tuning knobs
+- `api_key` MAY be a single string or a **list of strings** for multi-key support
+- `api_key_strategy` controls key ordering: `"fallback"` (try in order, default) or `"round_robin"` (rotate starting key per request)
 - A listed provider instance MUST exist in `providers`
 - Each provider class MUST validate its own config before execution
+- Custom provider types (`provider-<file>`) reference a Python file in the config directory
 - Supported and planned provider families are defined canonically in `docs/provider-matrix.md`
 
-**Key Functions**:
+**Key Functions** (`nexi/config.py`):
 - `load_config()`: Load from `~/.config/nexi/config.toml`
 - `save_config()`: Persist configuration
 - `validate_config()`: Validate TOML structure, provider references, and global settings
 - `ensure_config()`: Load config or create the default template and stop the run
-- `write_default_template()`: Create the default commented TOML template when config is missing
-- `run_onboarding()`: Optional guided activation of a basic LLM + search setup
-- `run_doctor()`: Check config syntax, active chains, required secrets, and command usability
 - `get_system_prompt()`: Generate system prompt with effort level
 - `get_compaction_prompt()`: Generate prompt for conversation summarization
+
+**Key Functions** (`nexi/config_template.py`):
+- `render_config_toml()`: Render the canonical TOML template with active providers and commented examples
+- `write_default_template()`: Write the default TOML template to disk when missing
+- `DEFAULT_CHAIN_CONFIG`: Default chain assignments (`llm_backends: []`, `search_backends: []`, `fetch_backends: ["snitchmd", "special_trafilatura", "special_playwright", "markdown_new"]`)
+- `PROVIDER_EXAMPLES`: All shipped provider config examples for template rendering
+- `ACTIVE_FETCH_PROVIDER_DEFAULTS`: Default active fetch provider configs
 
 **Bootstrap Rules**:
 - Missing config MUST create the default TOML template and exit immediately
 - The generated template MUST contain all shipped providers as visible config blocks
 - Inactive providers SHOULD remain commented out in the generated template
-- Zero-config fetch providers SHOULD be enabled by default in the template
+- Zero-config fetch providers (`snitchmd`, `special_trafilatura`, `special_playwright`, `markdown_new`) SHOULD be enabled by default in the template
 - LLM and search providers SHOULD require explicit activation by the user
 - `nexi onboard` is optional and MUST NOT run automatically on first use
-
-**Doctor Rules**:
-- `nexi doctor` MUST report both parse/shape errors and practical readiness errors
-- For `nexi`, doctor MUST require at least one usable LLM provider and one usable search provider
-- For `nexi-search`, doctor MUST require at least one usable search provider
-- For `nexi-fetch`, doctor MUST require at least one usable fetch provider
-- Readiness checks MUST verify required provider fields for the active chains, not just TOML syntax
 
 **Prompt Templates**:
 - `DEFAULT_SYSTEM_PROMPT_TEMPLATE`: Instructions for the search agent
@@ -254,6 +312,33 @@ EFFORT_LEVELS = {
     "l": {"max_iter": 32, "description": "Thorough research"},
 }
 ```
+
+### 2b. Config Readiness & Onboarding
+
+**Config Doctor** (`nexi/config_doctor.py`):
+- `check_command_readiness(config, command_name)`: Validates that the configured chains for a given command have resolvable and properly configured providers
+- `build_doctor_report(config)`: Runs readiness checks for all three public surfaces (`nexi`, `nexi-search`, `nexi-fetch`)
+- `build_doctor_summary(config)`: Produces a human-readable summary of configured chains and LLM models
+- `build_doctor_warnings(config)`: Warns about single-provider chains (no failover)
+- `COMMAND_REQUIREMENTS`: Maps each command name to its required chain and resolver requirements
+
+**Doctor Rules**:
+- `nexi doctor` MUST report both parse/shape errors and practical readiness errors
+- For `nexi`, doctor MUST require at least one usable LLM provider and one usable search provider
+- For `nexi-search`, doctor MUST require at least one usable search provider
+- For `nexi-fetch`, doctor MUST require at least one usable fetch provider
+- Readiness checks MUST verify required provider fields for the active chains, not just TOML syntax
+
+**Onboarding** (`nexi/onboard.py`):
+- `run_onboarding()`: Interactive guided setup for provider activation
+- Uses `questionary` for prompts, walks user through LLM, search, and fetch provider selection
+- Supports `openrouter`, `openai`, `local_openai`, `custom_llm` for LLM
+- Supports `jina`, `searxng`, `tavily`, `exa`, `firecrawl`, `linkup`, `brave`, `serpapi`, `serper`, `perplexity`, `custom_search` for search
+
+**Direct Provider Override** (`nexi/direct_provider.py`):
+- `build_direct_provider_config(config, provider_name, capability)`: Narrow a config to use one named provider for a capability, bypassing the fallback chain
+- Validates that the named provider exists and supports the requested capability
+- Raises `ValueError` on missing or incompatible provider
 
 ---
 
@@ -280,14 +365,15 @@ class SearchResult:
 
 ```
 1. Initialize:
-    - Clear URL cache
+    - Clear URL cache (nexi/backends/jina.py)
     - Derive an internal iteration budget from effort level
     - Create conversation with system prompt + user query
     - Initialize LLM provider orchestrator from llm_backends
     - Initialize citation tracking (url_to_number, url_to_title)
 
 2. For each iteration within the internal effort budget:
-    a. Call LLM with tools and current conversation through the LLM provider chain
+    a. Call LLM with tools through the LLM provider chain (run_llm_chain)
+       - Each LLM call wraps in a heartbeat timeout (5s interval, 120s max)
     b. Track token usage
     c. Parse response.message.tool_calls
 
@@ -297,18 +383,21 @@ class SearchResult:
 
     e. If tool_call is "web_search":
        - Execute provider-orchestrated searches over pending queries
+         via run_search_chain (nexi/backends/orchestrators.py)
        - Retry failed queries inside the active provider
        - Fail over only remaining failed queries to the next provider
-       - Capture titles from results for citations
+       - Capture titles from results for citations (url_to_title)
        - Add assistant message (tool_calls) to conversation
        - Add tool message (results) to conversation
 
     f. If tool_call is "web_get":
        - Assign stable citation numbers to URLs
        - Execute provider-orchestrated fetches over pending URLs
+         via run_fetch_chain (nexi/backends/orchestrators.py)
        - Retry failed URLs inside the active provider
        - Fail over only remaining failed URLs to the next provider
-       - Process content (full, chunks, or extraction)
+       - Process content (full, chunks, or extraction) in tools.py
+       - Append current sources list to the last page of results
        - Estimate tokens for result
        - Check if compaction needed:
            - If current + estimated > threshold:
@@ -379,25 +468,60 @@ Three tools are exposed to the LLM via function calling:
 - Fetch providers retry failed items up to `config.fetch_provider_retries` times (default: 2)
 - Search/fetch retries use exponential backoff before failover
 - LLM providers do NOT use same-provider retry on hard failure; they fail over immediately
+- **Multi-key retry**: Each provider with multiple API keys iterates through all keys (in fallback or round-robin order) before declaring provider failure
+- **api_key_exhausted** failure is recorded when all keys for a provider have been tried without success
 - On total provider chain failure, the search returns a forced error answer and terminates
 
 ---
 
-### 4. Tool Implementations and Provider Orchestration (`nexi/tools.py`, `nexi/backends/`)
+### 4. Tool Implementations (`nexi/tools.py`) & Provider Orchestration (`nexi/backends/orchestrators.py`)
 
-**Purpose**: Execute web search and content retrieval through provider interfaces and orchestration rules
+**Purpose**: Execute web search and content retrieval through provider interfaces and orchestration rules.
+Orchestration logic has been extracted from `tools.py` into `nexi/backends/orchestrators.py`.
 
-**URL Caching**:
-- In-memory cache `_url_cache: dict[str, str]`
-- Cleared at start of each search session
-- Prevents duplicate fetches of same URL
+**Tools** (`nexi/tools.py`):
+- `TOOLS`: List of OpenAI-compatible tool schemas (web_search, web_get, final_answer)
+- `execute_tool()`: Routes tool calls to the correct implementation
+- `heal_tool_args()`: Self-heals malformed LLM tool arguments (never crashes on bad input)
+- `web_search()`: Wraps `run_search_chain()` from orchestrators
+- `web_get()`: Wraps `run_fetch_chain()` from orchestrators, then processes content
+- `_extract_with_llm()`: LLM-based content extraction using `EXTRACTOR_PROMPT_TEMPLATE`
+- `_select_chunks_with_llm()`: Chunk-based content selection using `CHUNK_SELECTOR_PROMPT`
+- `_format_page_content()`: Formats page content with citation markers `[N] URL`
+- `create_logical_chunks()`: Heading-aware logical chunking for content splitting
+- `heal_tool_args()`: Validates and repairs LLM tool arguments per tool schema
 
-**HTTP Client**:
-- Shared `httpx.AsyncClient` with connection pooling
-- Limits: max_connections=10, max_keepalive_connections=5
-- Closed via `close_http_client()`
+**Orchestrators** (`nexi/backends/orchestrators.py`):
 
-#### Provider Protocols
+Three chain-running functions handle provider orchestration:
+
+1. **`run_search_chain(queries, config, verbose)`** — Search orchestration:
+   - Iterates through `config.search_backends` in order
+   - For each provider: resolves adapter class, builds per-attempt configs with API keys, validates, executes with retry
+   - Retries failed queries within the same provider up to `search_provider_retries` times (exponential backoff)
+   - Empty-result queries move to the next provider immediately
+   - Failed queries move to the next provider after retries exhausted
+   - All API keys for a provider are tried before declaring provider failure
+   - Returns `{"searches": [...], "provider_failures": [...]}`
+
+2. **`run_fetch_chain(urls, config, verbose)`** — Fetch orchestration:
+   - Same pattern as search but for URLs
+   - Retries failed URLs up to `fetch_provider_retries` times
+   - Returns `{"pages": [...], "provider_failures": [...]}`
+
+3. **`run_llm_chain(messages, tools, config, verbose, max_tokens)`** — LLM orchestration:
+   - Iterates through `config.llm_backends` in order
+   - Each LLM provider validates config, then calls `provider.complete()`
+   - Multi-key: tries each API key in order before failing over to next provider
+   - Raises `ProviderChainError` when all configured LLM providers fail
+
+**Provider failure metadata**:
+- `failure_kind` distinguishes `validation_error`, `provider_error`, `empty_results`, and `api_key_exhausted`
+- `failed_items` keeps the affected queries or URLs explicit for logs and doctor output
+- `attempt_key` labels which API key attempt failed (e.g. `"key_1"`, `"key_2"`)
+- `stage` indicates whether the failure occurred at `validate` or `execute`
+
+#### Provider Protocols (`nexi/backends/base.py`)
 
 ```python
 class Provider(Protocol):
@@ -436,9 +560,52 @@ class LLMProvider(Provider, Protocol):
         tools: list[dict[str, Any]],
         config: dict[str, Any],
         verbose: bool,
+        max_tokens: int,
     ) -> Any:
         """Returns provider response compatible with NEXI's chat loop."""
 ```
+
+#### Provider Registry (`nexi/backends/registry.py`)
+
+Three registries map provider type strings to adapter classes:
+
+- `SEARCH_PROVIDER_REGISTRY`: `brave`, `exa`, `firecrawl`, `jina`, `linkup`, `perplexity_search`, `searxng`, `serpapi`, `serper`, `tavily`
+- `FETCH_PROVIDER_REGISTRY`: `crawl4ai`, `exa`, `firecrawl`, `jina`, `linkup`, `markdown_new`, `snitchmd`, `special_playwright`, `special_trafilatura`, `tavily`
+- `LLM_PROVIDER_REGISTRY`: `openai_compatible`
+
+Custom provider types (`provider-<file>`) are resolved through `custom_python.py` rather than the hardcoded registries.
+
+#### API Keys Module (`nexi/backends/api_keys.py`)
+
+**Purpose**: Normalize, validate, and build per-attempt provider configs with resolved API keys.
+
+- `normalize_api_keys(config)`: Extract and normalize API keys from provider config. Supports `str` or `list[str]`. Returns a list of non-empty key strings.
+- `validate_api_keys(config, provider_name)`: Validate that `api_key` (if present) is a string or list of non-empty strings.
+- `get_api_key_strategy(config)`: Read `api_key_strategy`, defaulting to `"fallback"`.
+- `build_api_key_attempt_configs(provider_config, provider_name)`: Build ordered per-attempt deep copies with a single resolved API key.
+  - `fallback` strategy: keys appear in their original order every call.
+  - `round_robin` strategy: the starting key advances by one position on each call within the current process.
+- `reset_round_robin_state()`: Clear process-local round-robin state (for testing).
+
+#### Custom Python Providers (`nexi/backends/custom_python.py`)
+
+**Purpose**: Load and execute provider implementations from local Python files in the config directory.
+
+- `is_custom_provider_type(provider_type)`: Returns True when a provider type uses the `provider-` prefix.
+- `get_custom_provider_path(provider_type)`: Resolves `provider-<file>` to `~/.config/nexi/<file>.py`.
+- `build_custom_provider_class(capability, provider_name, provider_type)`: Dynamically builds a provider class wrapping `search()`, `fetch()`, or `complete()` from the custom module.
+- Supports `SearchProvider`, `FetchProvider`, and `LLMProvider` capabilities.
+- The custom module can define top-level functions (`search`, `fetch`, `complete`) or a `provider` object with those methods.
+- An optional `validate_config()` callable can be defined in the module.
+- Normalizes return values into the canonical payload shapes (search, fetch) or an OpenAI-like response object (LLM).
+
+#### HTTP Client (`nexi/backends/http_client.py`)
+
+- Shared `httpx.AsyncClient` with connection pooling
+- Limits: max_connections=10, max_keepalive_connections=5
+- `get_http_client(timeout)`: Returns a shared client, applying timeout from the first caller. Timeout changes in long-lived processes propagate to subsequent calls.
+- `close_http_client()`: Closes the shared client and releases connections.
+- Transport reuse MUST NOT create hidden cross-provider coupling for incompatible timeout settings.
 
 #### Provider Layout
 
@@ -446,48 +613,18 @@ class LLMProvider(Provider, Protocol):
 - Providers are grouped by capability or shared module, but referenced by provider name in config
 - A provider MAY implement one capability or several capabilities
 - Adding a new provider SHOULD primarily require:
-  1. adding the provider class,
-  2. registering its capability mapping,
-  3. documenting its config contract
+  1. adding the provider class in `nexi/backends/`,
+  2. registering its type in the appropriate registry in `registry.py`,
+  3. adding its example config in `config_template.py`,
+  4. documenting its config contract
 
-#### Search / Fetch Orchestrators
+#### Direct Commands with Provider Override
 
-**Search orchestration process**:
-1. Start with the full query set as pending
-2. Select the first provider instance from `search_backends`
-3. Read `providers[provider_name]`
-4. Resolve the provider adapter from `providers[provider_name]["type"]`
-5. Validate provider config
-6. Run the provider against pending queries
-7. Keep successful query results
-8. Retry only provider-error queries within the same provider up to `search_provider_retries`
-9. Move any empty-result queries to the next provider in the chain immediately
-10. Move any still-failed provider-error queries to the next provider in the chain
-11. Return the combined result set plus provider failure metadata
-
-**Provider failure metadata**:
-- `failure_kind` distinguishes `validation_error`, `provider_error`, and `empty_results`
-- `failed_items` keeps the affected queries or URLs explicit for logs and doctor output
-
-**Fetch orchestration process**:
-1. Start with the full URL set as pending
-2. Select the first provider instance from `fetch_backends`
-3. Read `providers[provider_name]`
-4. Resolve the provider adapter from `providers[provider_name]["type"]`
-5. Validate provider config
-6. Run the provider against pending URLs
-7. Keep successful URL fetches
-8. Retry only failed URLs within the same provider up to `fetch_provider_retries`
-9. Move any still-failed URLs to the next provider in the chain
-10. Return the combined page set plus provider failure metadata
-
-#### Direct Commands
-
-- `nexi-search` calls the search orchestrator directly and prints either plain text or JSON
-- `nexi-fetch` calls the fetch orchestrator directly and prints either extracted text or JSON
-- Direct fetch output is capped per page and spills oversized full content to temp files with absolute paths
-- Direct commands do not create citations/history unless explicitly requested by their own contract in a future revision
-- Direct commands MUST exit non-zero if every configured provider fails for every requested item
+- `nexi-search` (`search_cli.py`): calls `run_search_chain` directly, supports `--json` and `--provider NAME`
+- `nexi-fetch` (`fetch_cli.py`): calls `web_get` (which wraps `run_fetch_chain`), supports `--json`, `--provider NAME`, `--full`, `--chunks`, `--instructions`
+- `build_direct_provider_config()` (`direct_provider.py`): narrows config to one named provider, bypassing the fallback chain
+- Direct fetch output is capped per page via `direct_fetch.py` (truncation + temp file spillover)
+- Direct commands exit non-zero if every provider fails for every requested item
 
 **Response Format**:
 ```python
@@ -677,7 +814,30 @@ Findings:
 
 ---
 
-### 7. Token Counter (`nexi/token_counter.py`)
+### 6b. Runtime Noise Control (`nexi/runtime_noise.py`)
+
+**Purpose**: Keep normal CLI commands quiet by suppressing browser/runtime chatter, warnings, and unraisable cleanup traces unless verbose mode is enabled.
+
+**Key Functions**:
+- `configure_runtime_noise(verbose)`: Sets process-level noise behavior:
+  - In quiet mode: sets `NODE_NO_WARNINGS=1`, installs a silent unraisable hook, disables logging
+  - In verbose mode: restores original behavior
+- `suppress_runtime_chatter(verbose)`: Context manager that suppresses Python warnings during execution in quiet mode
+
+**Usage**: Every CLI entrypoint calls `configure_runtime_noise(verbose)` at startup and wraps execution in `suppress_runtime_chatter(verbose)`.
+
+### 7. Direct Fetch Output Processing (`nexi/direct_fetch.py`)
+
+**Purpose**: Cap direct-fetch output per page and spill oversized content to temp files.
+
+**Key Functions**:
+- `truncate_to_token_cap(text, max_tokens, encoding_name)`: Truncate text to a token budget. Returns `(text, was_truncated)`.
+- `spill_text_to_temp_file(text)`: Write full content to a temp file and return its absolute path.
+- `post_process_direct_fetch_payload(payload, max_tokens, encoding_name)`: Apply truncation and spillover to a structured fetch payload. Adds `full_content_path` to truncated pages.
+
+**Usage**: Called by `nexi-fetch` CLI and MCP `nexi_fetch` tool after fetching completes.
+
+### 8. Token Counter (`nexi/token_counter.py`)
 
 **Purpose**: Count tokens for context management
 
@@ -703,7 +863,7 @@ Findings:
 
 ---
 
-### 8. History Management (`nexi/history.py`)
+### 9. History Management (`nexi/history.py`)
 
 **Purpose**: Persist and retrieve search history
 
@@ -741,7 +901,7 @@ class HistoryEntry:
 
 ---
 
-### 9. Output Formatting (`nexi/output.py`)
+### 10. Output Formatting (`nexi/output.py`)
 
 **Purpose**: Format and display search results
 
@@ -768,7 +928,7 @@ class HistoryEntry:
 
 ---
 
-### 10. Error Handling (`nexi/errors.py`)
+### 11. Error Handling (`nexi/errors.py`)
 
 **Purpose**: Graceful error handling without stack traces
 
@@ -783,7 +943,7 @@ class HistoryEntry:
 
 ---
 
-### 11. MCP Server (`nexi/mcp_server.py`, `nexi/mcp_server_cli.py`)
+### 12. MCP Server (`nexi/mcp_server.py`, `nexi/mcp_server_cli.py`)
 
 **Purpose**: Expose NEXI as a Model Context Protocol server
 
@@ -810,7 +970,13 @@ class HistoryEntry:
 **Returns**:
 - `nexi_agent`: Markdown-formatted answer with metadata and sources
 - `nexi_search`: Structured direct-search payload matching the `nexi-search --json` shape
-- `nexi_fetch`: Structured direct-fetch payload matching the `nexi-fetch --json` shape
+- `nexi_fetch`: Structured direct-fetch payload matching the `nexi-fetch --json` shape (includes `full_content_path` spillover markers)
+
+**Error Handling**:
+- All MCP tools use `_load_ready_config(command_name)` to check config and readiness
+- If config is missing: returns a config-created message advising the user to fill in the template
+- If readiness fails: returns a descriptive error per command surface
+- If execution fails: returns error string or structured `{"error": "..."}` payload
 
 **Contracts / Invariants**:
 - MCP tool naming MUST match the runtime surface it exposes
@@ -818,6 +984,7 @@ class HistoryEntry:
 - `nexi_search` MUST follow the same readiness rules as `nexi-search`
 - `nexi_fetch` MUST follow the same readiness rules as `nexi-fetch`
 - `nexi/mcp_server_cli.py` MUST be a first-class CLI entrypoint with explicit transport validation
+- `nexi_fetch` applies post-processing via `post_process_direct_fetch_payload()` for token capping and spillover
 
 **Transport Options**:
 - **STDIO** (default): For local MCP clients (Claude Desktop)
@@ -1217,7 +1384,7 @@ NEXI supports swappable provider chains for LLM, search, and fetch capabilities.
    - Provide capability methods such as `search()`, `fetch()`, or `complete()`
 
 2. **Provider Registration**:
-   - Register the provider under its `type` for each supported capability
+   - Register the provider under its `type` in the appropriate registry in `registry.py`
    - Keep provider selection declarative through config, not hardcoded conditionals
 
 3. **Provider Configuration**:
@@ -1225,21 +1392,45 @@ NEXI supports swappable provider chains for LLM, search, and fetch capabilities.
     - Set `providers[provider_name]["type"]` to the registered provider type
     - Add the provider name to one or more ordered chains: `llm_backends`, `search_backends`, `fetch_backends`
 
+### Custom Python Providers
+
+For user-defined backends that don't require changes to the NEXI codebase:
+
+1. Create a Python file at `~/.config/nexi/<name>.py`
+2. Define a `search()`, `fetch()`, and/or `complete()` async function at module level (or a `provider` object with those methods)
+3. Optionally define `validate_config()` for config validation
+4. Reference it in config with type `provider-<name>`
+
+### Multi-Key Support
+
+For provider instances that need more reliability:
+
+1. Set `api_key` to a list of strings instead of a single string
+2. Optionally set `api_key_strategy` to:
+   - `"fallback"` (default) — tries keys in order until one succeeds
+   - `"round_robin"` — rotates the starting key per request (spreads load/rate limits)
+3. Each key is tried before the provider is marked as failed
+
 Example configuration:
 ```toml
 llm_backends = ["openrouter"]
 search_backends = ["searxng"]
-fetch_backends = ["special_trafilatura", "special_playwright", "markdown_new"]
+fetch_backends = ["snitchmd", "special_trafilatura", "special_playwright", "markdown_new"]
 
 [providers.openrouter]
 type = "openai_compatible"
 base_url = "https://openrouter.ai/api/v1"
-api_key = "key123"
+api_key = ["key1", "key2"]    # multi-key with fallback
+api_key_strategy = "fallback"
 model = "google/gemini-2.5-flash-lite"
 
 [providers.searxng]
 type = "searxng"
 base_url = "https://search.example.org"
+
+[providers.snitchmd]
+type = "snitchmd"
+mode = "precision"
 
 [providers.special_trafilatura]
 type = "special_trafilatura"
@@ -1327,7 +1518,7 @@ retain_images = false
    - Use `--plain` flag
    - Use Windows Terminal instead of cmd.exe
 
-6. **MCP Server Not Found**
+5. **MCP Server Not Found**
    - Install with `uv sync --group mcp`
    - Check Claude Desktop config
 
@@ -1367,10 +1558,15 @@ retain_images = false
 
 ## Implementation Pointers
 
-- **Entry points**: `main.py`, `nexi/__main__.py`, `nexi/cli.py`
-- **Core modules**: `nexi/search.py`, `nexi/tools.py`, `nexi/config.py`
+- **Entry points**: `main.py`, `nexi/__main__.py`, `nexi/cli.py`, `nexi/search_cli.py`, `nexi/fetch_cli.py`, `nexi/mcp_server_cli.py`
+- **Core modules**: `nexi/search.py`, `nexi/tools.py`, `nexi/config.py`, `nexi/config_template.py`
+- **Backend orchestration**: `nexi/backends/orchestrators.py`, `nexi/backends/registry.py`, `nexi/backends/api_keys.py`
 - **Support modules**: `nexi/compaction.py`, `nexi/citations.py`, `nexi/token_counter.py`
-- **Output**: `nexi/output.py`, `nexi/history.py`, `nexi/errors.py`
+- **Config lifecycle**: `nexi/config_doctor.py`, `nexi/onboard.py`, `nexi/direct_provider.py`
+- **Output & noise**: `nexi/output.py`, `nexi/history.py`, `nexi/errors.py`, `nexi/runtime_noise.py`
+- **Provider implementations**: `nexi/backends/*.py`
+- **Custom providers**: `nexi/backends/custom_python.py`
+- **Direct fetch post-processing**: `nexi/direct_fetch.py`
 - **MCP**: `nexi/mcp_server.py`, `nexi/mcp_server_cli.py`
 - **Provider catalog**: `docs/provider-matrix.md`
 - **Config location**: `~/.config/nexi/config.toml`

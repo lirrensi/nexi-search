@@ -525,3 +525,300 @@ async def test_run_llm_chain_raises_when_all_providers_fail(monkeypatch) -> None
             verbose=False,
             max_tokens=10,
         )
+
+
+# ---------------------------------------------------------------------------
+# Multi-key (per-key fallback) orchestration tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_search_chain_retries_second_key_before_next_provider(monkeypatch) -> None:
+    """Search orchestrator retries second key in the same provider before the next.
+
+    provider_primary has api_key = ["bad", "good"] - first key fails, second succeeds.
+    provider_secondary must NOT be called.
+    """
+    key_attempts: list[str] = []
+
+    class MultiKeySearchProvider:
+        name = "primary_search"
+
+        def validate_config(self, config: dict[str, Any]) -> None:
+            return None
+
+        async def search(
+            self,
+            queries: list[str],
+            config: dict[str, Any],
+            timeout: float,
+            verbose: bool,
+        ) -> dict[str, Any]:
+            key_attempts.append(config.get("api_key", "none"))
+            if config.get("api_key") == "good":
+                return {
+                    "searches": [
+                        {"query": q, "results": [{"title": "ok", "url": "https://ok"}]}
+                        for q in queries
+                    ]
+                }
+            return {
+                "searches": [
+                    {"query": q, "results": [], "error": "key rejected"} for q in queries
+                ]
+            }
+
+    class SecondarySearchProvider:
+        name = "secondary_search"
+
+        def validate_config(self, config: dict[str, Any]) -> None:
+            return None
+
+        async def search(
+            self,
+            queries: list[str],
+            config: dict[str, Any],
+            timeout: float,
+            verbose: bool,
+        ) -> dict[str, Any]:
+            raise AssertionError("Secondary provider should not be called")
+
+    monkeypatch.setattr(
+        "nexi.backends.orchestrators.resolve_search_provider",
+        lambda provider_name, providers: {
+            "primary_search": MultiKeySearchProvider,
+            "secondary_search": SecondarySearchProvider,
+        }[provider_name],
+    )
+
+    config = _build_config(
+        search_backends=["primary_search", "secondary_search"],
+        search_provider_retries=0,
+        providers={
+            "primary_search": {
+                "type": "primary_search",
+                "api_key": ["bad", "good"],
+            },
+            "secondary_search": {
+                "type": "secondary_search",
+            },
+        },
+    )
+
+    payload = await run_search_chain(["q1"], config, verbose=False)
+
+    # With search_provider_retries=0, "bad" key gets 1 attempt, then "good" key succeeds
+    assert key_attempts == ["bad", "good"]
+    assert payload["searches"][0]["results"][0]["url"] == "https://ok"
+    assert len(payload["provider_failures"]) > 0
+    for failure in payload["provider_failures"]:
+        assert "api_key" not in failure
+
+
+@pytest.mark.asyncio
+async def test_run_fetch_chain_retries_second_key_before_next_provider(monkeypatch) -> None:
+    """Fetch orchestrator retries second key in the same provider before the next.
+
+    provider_primary has api_key = ["bad", "good"] - first key fails, second succeeds.
+    provider_secondary must NOT be called.
+    """
+    key_attempts: list[str] = []
+
+    class MultiKeyFetchProvider:
+        name = "primary_fetch"
+
+        def validate_config(self, config: dict[str, Any]) -> None:
+            return None
+
+        async def fetch(
+            self,
+            urls: list[str],
+            config: dict[str, Any],
+            timeout: float,
+            verbose: bool,
+        ) -> dict[str, Any]:
+            key_attempts.append(config.get("api_key", "none"))
+            if config.get("api_key") == "good":
+                return {"pages": [{"url": url, "content": f"content for {url}"} for url in urls]}
+            return {"pages": [{"url": url, "content": "", "error": "key rejected"} for url in urls]}
+
+    class SecondaryFetchProvider:
+        name = "secondary_fetch"
+
+        def validate_config(self, config: dict[str, Any]) -> None:
+            return None
+
+        async def fetch(
+            self,
+            urls: list[str],
+            config: dict[str, Any],
+            timeout: float,
+            verbose: bool,
+        ) -> dict[str, Any]:
+            raise AssertionError("Secondary provider should not be called")
+
+    monkeypatch.setattr(
+        "nexi.backends.orchestrators.resolve_fetch_provider",
+        lambda provider_name, providers: {
+            "primary_fetch": MultiKeyFetchProvider,
+            "secondary_fetch": SecondaryFetchProvider,
+        }[provider_name],
+    )
+
+    config = _build_config(
+        fetch_backends=["primary_fetch", "secondary_fetch"],
+        fetch_provider_retries=0,
+        providers={
+            "primary_fetch": {
+                "type": "primary_fetch",
+                "api_key": ["bad", "good"],
+            },
+            "secondary_fetch": {
+                "type": "secondary_fetch",
+            },
+        },
+    )
+
+    payload = await run_fetch_chain(["https://example.com"], config, verbose=False)
+
+    # With fetch_provider_retries=0, "bad" key gets 1 attempt, then "good" key succeeds
+    assert key_attempts == ["bad", "good"]
+    assert payload["pages"][0]["content"] == "content for https://example.com"
+    for failure in payload["provider_failures"]:
+        assert "api_key" not in failure
+
+
+@pytest.mark.asyncio
+async def test_run_llm_chain_retries_second_key_before_next_provider(monkeypatch) -> None:
+    """LLM orchestrator retries second key in the same provider before the next.
+
+    provider_primary has api_key = ["bad", "good"] - first key raises, second succeeds.
+    provider_secondary must NOT be called.
+    """
+    key_attempts: list[str] = []
+
+    class MultiKeyLLMProvider:
+        name = "primary_llm"
+
+        def validate_config(self, config: dict[str, Any]) -> None:
+            return None
+
+        async def complete(
+            self,
+            messages: list[dict[str, Any]],
+            tools: list[dict[str, Any]],
+            config: dict[str, Any],
+            verbose: bool,
+            max_tokens: int,
+        ) -> Any:
+            key_attempts.append(config.get("api_key", "none"))
+            if config.get("api_key") == "good":
+                return SimpleNamespace(
+                    choices=[SimpleNamespace(message=SimpleNamespace(content="ok", tool_calls=None))],
+                    usage=None,
+                )
+            raise RuntimeError("bad key")
+
+    class SecondaryLLMProvider:
+        name = "secondary_llm"
+
+        def validate_config(self, config: dict[str, Any]) -> None:
+            return None
+
+        async def complete(
+            self,
+            messages: list[dict[str, Any]],
+            tools: list[dict[str, Any]],
+            config: dict[str, Any],
+            verbose: bool,
+            max_tokens: int,
+        ) -> Any:
+            raise AssertionError("Secondary provider should not be called")
+
+    monkeypatch.setattr(
+        "nexi.backends.orchestrators.resolve_llm_provider",
+        lambda provider_name, providers: {
+            "primary_llm": MultiKeyLLMProvider,
+            "secondary_llm": SecondaryLLMProvider,
+        }[provider_name],
+    )
+
+    config = _build_config(
+        llm_backends=["primary_llm", "secondary_llm"],
+        providers={
+            "primary_llm": {
+                "type": "primary_llm",
+                "base_url": "https://api.test.com/v1",
+                "api_key": ["bad", "good"],
+                "model": "model",
+            },
+            "secondary_llm": {
+                "type": "secondary_llm",
+                "base_url": "https://api.test.com/v1",
+                "api_key": "key",
+                "model": "model",
+            },
+        },
+    )
+
+    response = await run_llm_chain(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=[],
+        config=config,
+        verbose=False,
+        max_tokens=100,
+    )
+
+    assert key_attempts == ["bad", "good"]
+    assert response.choices[0].message.content == "ok"
+
+
+@pytest.mark.asyncio
+async def test_run_search_chain_api_key_exhausted_failure_kind(monkeypatch) -> None:
+    """When all keys fail for a provider, failure_kind includes api_key_exhausted."""
+    key_attempts: list[str] = []
+
+    class AlwaysFailingSearchProvider:
+        name = "primary_search"
+
+        def validate_config(self, config: dict[str, Any]) -> None:
+            return None
+
+        async def search(
+            self,
+            queries: list[str],
+            config: dict[str, Any],
+            timeout: float,
+            verbose: bool,
+        ) -> dict[str, Any]:
+            key_attempts.append(config.get("api_key", "none"))
+            return {
+                "searches": [
+                    {"query": q, "results": [], "error": "always fails"} for q in queries
+                ]
+            }
+
+    monkeypatch.setattr(
+        "nexi.backends.orchestrators.resolve_search_provider",
+        lambda provider_name, providers: AlwaysFailingSearchProvider,
+    )
+
+    config = _build_config(
+        search_backends=["primary_search"],
+        search_provider_retries=0,
+        providers={
+            "primary_search": {
+                "type": "primary_search",
+                "api_key": ["k1", "k2"],
+            },
+        },
+    )
+
+    payload = await run_search_chain(["q1"], config, verbose=False)
+
+    # Both keys should have been exhausted
+    failure_kinds = [f["failure_kind"] for f in payload["provider_failures"]]
+    assert "api_key_exhausted" in failure_kinds
+    # No raw key in failure metadata
+    for failure in payload["provider_failures"]:
+        assert "api_key" not in failure

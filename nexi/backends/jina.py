@@ -8,6 +8,7 @@ from typing import Any, cast
 
 import httpx
 
+from nexi.backends.api_keys import validate_api_keys
 from nexi.backends.http_client import close_http_client, get_http_client
 
 _url_cache: dict[str, str] = {}
@@ -25,9 +26,7 @@ class JinaSearchProvider:
 
     def validate_config(self, config: dict[str, Any]) -> None:
         """Validate Jina search config."""
-        api_key = config.get("api_key", "")
-        if api_key is not None and not isinstance(api_key, str):
-            raise ValueError("Jina api_key must be a string")
+        validate_api_keys(config, "Jina")
 
     async def search(
         self,
@@ -68,9 +67,7 @@ class JinaFetchProvider:
 
     def validate_config(self, config: dict[str, Any]) -> None:
         """Validate Jina fetch config."""
-        api_key = config.get("api_key", "")
-        if api_key is not None and not isinstance(api_key, str):
-            raise ValueError("Jina api_key must be a string")
+        validate_api_keys(config, "Jina")
 
     async def fetch(
         self,

@@ -63,6 +63,29 @@ These provider families are tracked intentionally, but they are not valid shippe
 - Supported provider-specific field requirements live in code-level validation and MUST remain consistent with this matrix.
 - Planned provider families MUST NOT be accepted by config validation or doctor until implemented.
 
+## Multi-Key Support
+
+Any provider that accepts `api_key` supports both single-key and multi-key configurations:
+
+- `api_key` MAY be a single string or a **list of strings**
+- `api_key_strategy` controls key ordering:
+  - `"fallback"` (default) — keys are tried in order until one succeeds
+  - `"round_robin"` — the starting key rotates by one position per request (spreads rate limits)
+- The `api_key_strategy` field is optional and defaults to `"fallback"`
+- Provider failure metadata distinguishes individual key failures with `attempt_key` (e.g. `key_1`, `key_2`)
+- When all keys for a provider are exhausted, the failure is recorded as `api_key_exhausted`
+
+## Custom Python Providers (`provider-<file>`)
+
+Define custom backends as Python files in the config directory:
+
+1. Create `~/.config/nexi/<name>.py`
+2. Define `search()`, `fetch()`, and/or `complete()` async functions (or a `provider` object with those methods)
+3. Optionally define `validate_config()` for config validation
+4. Reference in config with `type = "provider-<name>"`
+
+Capabilities are resolved dynamically: a file with `search()` provides search capability; with `fetch()` provides fetch capability; with `complete()` provides LLM capability.
+
 ## Default Template Expectations
 
 The generated template SHOULD look like this at a high level:

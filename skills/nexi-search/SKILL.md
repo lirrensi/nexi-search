@@ -52,6 +52,27 @@ nexi --plain -e l "compare React vs Svelte performance 2024"
 | `--show ID` | Show one saved result by ID |
 | `--json` | Structured output for `nexi-search` and `nexi-fetch` |
 
+## Multi-key provider support
+
+Every credentialed provider accepts `api_key` as either a single string or a list of strings. This means a provider can try multiple API keys before falling through to the next provider in the chain.
+
+Configure per-provider key strategy in `~/.config/nexi/config.toml`:
+
+```toml
+[providers.tavily]
+type = "tavily"
+api_key = ["<key_one>", "<key_two>"]
+api_key_strategy = "fallback"    # try in order (default)
+# api_key_strategy = "round_robin"  # rotate starting key per request
+```
+
+- `"fallback"` (default) — keys are tried in order until one succeeds; only then does NEXI move to the next provider
+- `"round_robin"` — the starting key advances on each call, distributing load across keys in long-lived processes
+
+Zero-key providers (`special_trafilatura`, `markdown_new`, `snitchmd`, etc.) are unaffected.
+
+If all keys for a provider fail, failure metadata includes `failure_kind: "api_key_exhausted"` without exposing real key values.
+
 ## Direct provider override
 
 Use a specific provider when the fallback chain keeps failing or the user explicitly wants one provider.

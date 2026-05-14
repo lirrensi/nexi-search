@@ -58,18 +58,21 @@ PROVIDER_EXAMPLES: dict[str, dict[str, Any]] = {
         "type": "openai_compatible",
         "base_url": "https://openrouter.ai/api/v1",
         "api_key": "<your_api_key>",
+        "api_key_strategy": "fallback",
         "model": "google/gemini-2.5-flash-lite",
     },
     "openai": {
         "type": "openai_compatible",
         "base_url": "https://api.openai.com/v1",
         "api_key": "<your_api_key>",
+        "api_key_strategy": "fallback",
         "model": "gpt-4.1-mini",
     },
     "local_openai": {
         "type": "openai_compatible",
         "base_url": "http://localhost:11434/v1",
         "api_key": "local-key",
+        "api_key_strategy": "fallback",
         "model": "your-model",
     },
     "custom_llm": {
@@ -78,6 +81,7 @@ PROVIDER_EXAMPLES: dict[str, dict[str, Any]] = {
     "jina": {
         "type": "jina",
         "api_key": "<your_api_key>",
+        "api_key_strategy": "fallback",
     },
     "searxng": {
         "type": "searxng",
@@ -89,7 +93,8 @@ PROVIDER_EXAMPLES: dict[str, dict[str, Any]] = {
     },
     "tavily": {
         "type": "tavily",
-        "api_key": "<your_api_key>",
+        "api_key": ["<your_first_key>", "<your_second_key>"],
+        "api_key_strategy": "fallback",
         "search_depth": "basic",
         "topic": "general",
         "max_results": 5,
@@ -97,12 +102,14 @@ PROVIDER_EXAMPLES: dict[str, dict[str, Any]] = {
     "exa": {
         "type": "exa",
         "api_key": "<your_api_key>",
+        "api_key_strategy": "fallback",
         "num_results": 5,
         "text": True,
     },
     "firecrawl": {
         "type": "firecrawl",
         "api_key": "<your_api_key>",
+        "api_key_strategy": "fallback",
         "only_main_content": True,
         "formats": ["markdown"],
         "limit": 5,
@@ -110,27 +117,32 @@ PROVIDER_EXAMPLES: dict[str, dict[str, Any]] = {
     "linkup": {
         "type": "linkup",
         "api_key": "<your_api_key>",
+        "api_key_strategy": "fallback",
         "depth": "standard",
         "output_type": "searchResults",
     },
     "brave": {
         "type": "brave",
         "api_key": "<your_api_key>",
+        "api_key_strategy": "fallback",
         "count": 5,
     },
     "serpapi": {
         "type": "serpapi",
         "api_key": "<your_api_key>",
+        "api_key_strategy": "fallback",
         "engine": "google",
     },
     "serper": {
         "type": "serper",
         "api_key": "<your_api_key>",
+        "api_key_strategy": "fallback",
         "num": 5,
     },
     "perplexity": {
         "type": "perplexity_search",
         "api_key": "<your_api_key>",
+        "api_key_strategy": "fallback",
         "max_results": 5,
     },
     "custom_search": {
@@ -192,6 +204,10 @@ def render_config_toml(active_config: dict[str, Any] | None = None) -> str:
         "# Activate at least one LLM provider and one search provider before running `nexi`.",
         "# The default fetch chain uses the quiet providers only.",
         "# Provider instances are shared across chains.",
+        '# api_key may be either a single string or a list of strings (for multiple keys).',
+        '# api_key_strategy controls per-provider key behaviour:',
+        '#   "fallback"    - try keys in order until one succeeds (default)',
+        '#   "round_robin" - rotate the starting key across requests in the same process',
         "# Define each [providers.<name>] table only once, then reuse that name in search_backends and fetch_backends.",
         '# If you need different settings for search and fetch, use different names like "jina_search" and "jina_fetch".',
         _format_assignment("llm_backends", config["llm_backends"]),

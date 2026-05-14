@@ -43,12 +43,15 @@ Run the full NEXI agent. This is the MCP counterpart to `nexi`.
 **Parameters:**
 - `query` (required): The search query to investigate
 - `effort` (optional): Search depth - "s" (quick), "m" (medium, default), "l" (deep)
-- `max_iter` (optional): Override maximum search iterations
-- `time_target` (optional): Force return after N seconds
-- `verbose` (optional): Show detailed progress
+- `verbose` (optional): Show detailed progress including tool calls and debug info
 
 **Returns:**
 Comprehensive answer with sources cited in markdown format, including metadata about iterations, duration, tokens, and source URLs.
+
+**Error handling:**
+- If the NEXI config file is missing or incomplete, returns an actionable message advising the user to fill in the template
+- If no usable LLM or search provider is configured, returns a readiness error
+- If the search fails at runtime, returns an error message
 
 ### `nexi_search`
 
@@ -67,13 +70,16 @@ Run the direct fetch backend chain. This is the MCP counterpart to `nexi-fetch`.
 
 **Parameters:**
 - `urls` (required): One or more URLs to fetch
-- `full` (optional): Return full fetched content without extraction
-- `chunks` (optional): Use chunk selection instead of summarization
-- `instructions` (optional): Custom extraction instructions
+- `full` (optional): Return full fetched content without LLM extraction
+- `chunks` (optional): Use chunk selection instead of LLM summarization
+- `instructions` (optional): Custom extraction instructions for the LLM summarizer (only when `full=false` and `chunks=false`)
 - `verbose` (optional): Show provider debug output
 
 **Returns:**
 Structured fetch payload matching `nexi-fetch --json`, including `pages`, `provider_failures`, and any `full_content_path` spillover markers for oversized pages.
+
+**Error handling:**
+- Returns `{"error": "..."}` when `urls` is empty, config is missing, readiness checks fail, or the fetch fails at runtime
 
 ## Example MCP Client Configuration
 
@@ -118,4 +124,6 @@ fastmcp run nexi/mcp_server.py --reload
 - `nexi_agent` requires a usable LLM provider and a usable search provider
 - `nexi_search` requires a usable search provider
 - `nexi_fetch` requires a usable fetch provider
+- All three MCP tools validate readiness via `check_command_readiness()` before executing
+- `nexi_fetch` applies the same token-capping and spillover logic as the `nexi-fetch` CLI (via `post_process_direct_fetch_payload`)
 - MCP tool names intentionally mirror the runtime surfaces they expose

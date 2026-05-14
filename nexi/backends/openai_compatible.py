@@ -7,6 +7,8 @@ from typing import Any
 import httpx
 from openai import AsyncOpenAI
 
+from nexi.backends.api_keys import normalize_api_keys, validate_api_keys
+
 
 class OpenAICompatibleLLMProvider:
     """OpenAI-compatible LLM provider."""
@@ -16,13 +18,13 @@ class OpenAICompatibleLLMProvider:
     def validate_config(self, config: dict[str, Any]) -> None:
         """Validate OpenAI-compatible config."""
         base_url = config.get("base_url", "")
-        api_key = config.get("api_key", "")
         model = config.get("model", "")
 
         if not isinstance(base_url, str) or not base_url.startswith(("http://", "https://")):
             raise ValueError("OpenAI-compatible base_url must be a valid HTTP(S) URL")
-        if not isinstance(api_key, str) or not api_key.strip():
-            raise ValueError("OpenAI-compatible api_key must be a non-empty string")
+        validate_api_keys(config, "OpenAI-compatible")
+        if not normalize_api_keys(config):
+            raise ValueError("OpenAI-compatible api_key must be a non-empty string or list")
         if not isinstance(model, str) or not model.strip():
             raise ValueError("OpenAI-compatible model must be a non-empty string")
 

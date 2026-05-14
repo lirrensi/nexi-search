@@ -364,6 +364,41 @@ def test_validate_config_rejects_missing_custom_provider_file(tmp_path: Path, mo
     assert any("missing custom provider file" in error for error in errors)
 
 
+def test_config_from_dict_preserves_list_api_key() -> None:
+    """Config.from_dict preserves list-form api_key values."""
+    data = {
+        "llm_backends": ["openrouter"],
+        "search_backends": ["jina"],
+        "fetch_backends": [],
+        "providers": {
+            "jina": {"type": "jina", "api_key": ["k1", "k2"]},
+        },
+        "default_effort": "m",
+    }
+    config = Config.from_dict(data)
+    assert config.providers["jina"]["api_key"] == ["k1", "k2"]
+
+
+def test_render_config_toml_preserves_list_api_key() -> None:
+    """render_config_toml preserves list-form api_key without rewriting to string."""
+    text = render_config_toml({
+        "llm_backends": [],
+        "search_backends": [],
+        "fetch_backends": [],
+        "providers": {
+            "test_provider": {
+                "type": "tavily",
+                "api_key": ["k1", "k2"],
+            },
+        },
+    })
+    # The list should be rendered as TOML list syntax
+    assert '"k1"' in text
+    assert '"k2"' in text
+    # The active provider should render api_key = ["k1", "k2"] as a list
+    assert 'api_key = ["k1", "k2"]' in text
+
+
 def test_get_compaction_prompt() -> None:
     """Compaction prompt includes key interpolated values."""
     prompt = get_compaction_prompt(

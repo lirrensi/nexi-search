@@ -8,10 +8,14 @@ NEXI is not just another search wrapper with a cute prompt and one hardcoded bac
 
 ---
 
-## Version 2.1.0
+## Version 2.2.5
 
-NEXI 2.1.0 keeps the 2.0 cleanup release intact and sands down more of the rough edges.
+NEXI 2.2 keeps the 2.0 provider-chain model and adds multi-key provider reliability — every credentialed provider now accepts `api_key` as either a single string or a list of strings, with two configurable key strategies.
 
+- 🔑 **Multi-key support** — every credentialed provider accepts `api_key` as a string or a list of strings
+- 🔄 **Two key strategies** — `"fallback"` (try keys in order, default) and `"round_robin"` (rotate starting key per request)
+- 🧩 **Per-provider key exhaustion** — each provider instance tries all its keys before falling through to the next provider
+- 🏷️ **Safe failure metadata** — key failures are labelled `key_1`, `key_2` etc. without exposing real values
 - ✨ provider chains are now the core model, with ordered fallbacks across LLM, search, and fetch
 - 🧾 config is now TOML at `~/.config/nexi/config.toml`
 - 🚪 first run creates a commented template and exits cleanly instead of forcing a wizard
@@ -126,11 +130,45 @@ SearXNG is fully supported for local self-hosting.
 | Problem | NEXI 2.0 answer |
 |---------|------------------|
 | One provider goes down | Ordered fallbacks continue through the next configured provider |
+| One API key hits a rate limit | List of keys per provider with `"fallback"` or `"round_robin"` strategy |
 | Search and fetch are coupled together awkwardly | Search, fetch, and LLM chains are configured independently |
 | CLI surfaces are muddy | `nexi`, `nexi-search`, and `nexi-fetch` each have a clear role |
 | MCP naming is confusing | MCP now mirrors the same runtime model exactly |
 | First-run setup is messy | Missing config creates a readable TOML template and exits cleanly |
 | Agents need structured payloads | Direct search and fetch support `--json` |
+
+---
+
+## Multi-Key Provider Support
+
+Every credentialed provider accepts `api_key` as either a single string or a list of strings. This lets you configure multiple API keys per provider for redundancy or load distribution.
+
+### Key Strategies
+
+Configured per-provider with `api_key_strategy`:
+
+| Strategy | Behaviour |
+|----------|-----------|
+| `"fallback"` (default) | Keys are tried in order until one succeeds before moving to the next provider |
+| `"round_robin"` | The starting key rotates across requests in the same process, spreading load evenly |
+
+### Example
+
+```toml
+[providers.tavily]
+type = "tavily"
+api_key = ["<your_first_key>", "<your_second_key>"]
+api_key_strategy = "fallback"
+search_depth = "basic"
+topic = "general"
+max_results = 5
+```
+
+With `"fallback"`, if the first key hits a rate limit or returns an error, the second key is tried automatically before NEXI moves to the next configured provider in the chain.
+
+With `"round_robin"`, each call to the same provider instance starts with the next key, distributing usage across all configured keys.
+
+Zero-key providers (`special_trafilatura`, `markdown_new`, `snitchmd`, etc.) are unaffected.
 
 ---
 
@@ -204,12 +242,21 @@ Useful commands:
 Example shape:
 
 ```toml
+# api_key may be either a single string or a list of strings (for multiple keys).
+# api_key_strategy controls per-provider key behaviour:
+#   "fallback"    - try keys in order until one succeeds (default)
+#   "round_robin" - rotate the starting key across requests in the same process
+
 llm_backends = []
 search_backends = []
 fetch_backends = ["snitchmd", "special_trafilatura", "special_playwright", "markdown_new"]
 
 default_effort = "m"
 max_context = 128000
+auto_compact_thresh = 0.9
+compact_target_words = 5000
+preserve_last_n_messages = 3
+tokenizer_encoding = "cl100k_base"
 provider_timeout = 30
 direct_fetch_max_tokens = 8000
 search_provider_retries = 2
@@ -236,17 +283,22 @@ retain_images = false
 
 # Uncomment one LLM and one search provider.
 # llm_backends = ["openrouter"]
-# search_backends = ["searxng"]
+# search_backends = ["tavily"]
 #
 # [providers.openrouter]
 # type = "openai_compatible"
 # base_url = "https://openrouter.ai/api/v1"
 # api_key = "<your_api_key>"
+# api_key_strategy = "fallback"
 # model = "google/gemini-2.5-flash-lite"
 #
-# [providers.searxng]
-# type = "searxng"
-# base_url = "http://localhost:8999"
+# [providers.tavily]
+# type = "tavily"
+# api_key = ["<your_first_key>", "<your_second_key>"]
+# api_key_strategy = "fallback"
+# search_depth = "basic"
+# topic = "general"
+# max_results = 5
 ```
 
 ---

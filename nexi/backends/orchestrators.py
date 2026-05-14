@@ -13,6 +13,7 @@ import contextlib
 import io
 from typing import Any
 
+from nexi.backends.api_keys import build_api_key_attempt_configs
 from nexi.backends.registry import (
     resolve_fetch_provider,
     resolve_llm_provider,
@@ -48,9 +49,14 @@ def _provider_failure(
     stage: str,
     attempts: int,
     failure_kind: str,
+    attempt_key: str = "",
 ) -> dict[str, Any]:
-    """Build structured provider failure metadata."""
-    return {
+    """Build structured provider failure metadata.
+
+    *attempt_key* is a non-secret label such as ``"key_1"``, ``"key_2"``
+    that identifies which API-key attempt failed.  It is omitted when empty.
+    """
+    result: dict[str, Any] = {
         "capability": capability,
         "provider": provider_name,
         "provider_type": provider_type,
@@ -60,6 +66,9 @@ def _provider_failure(
         "attempts": attempts,
         "failure_kind": failure_kind,
     }
+    if attempt_key:
+        result["attempt_key"] = attempt_key
+    return result
 
 
 def _summarize_item_errors(
@@ -105,6 +114,134 @@ def _search_item_failure_kind(item: dict[str, Any]) -> str | None:
     return None
 
 
+async def _run_search_attempt(
+    provider: Any,
+    config: Config,
+    provider_name: str,
+    provider_type: str | None,
+    retry_queries: list[str],
+    attempt_config: dict[str, Any],
+    key_idx: int,
+    verbose: bool,
+    query_had_empty_results: set[str],
+    results_by_query: dict[str, dict[str, Any]],
+    provider_failures: list[dict[str, Any]],
+) -> tuple[list[str], list[str]]:
+    """Execute one per-key search attempt with the same-provider retry loop.
+
+    Returns ``(retryable_queries, empty_queries)`` for the next key attempt.
+    Preserves successful queries in *results_by_query* and appends failure
+    metadata to *provider_failures*.
+    """
+    empty_queries: list[str] = []
+    empty_failure_attempt = 0
+    final_error = f"Search provider '{provider_name}' failed"
+    attempts_made = 0
+    max_attempts = config.search_provider_retries + 1
+    remaining = retry_queries.copy()
+
+    for attempt in range(1, max_attempts + 1):
+        attempts_made = attempt
+        try:
+            with _quiet_provider_io(verbose):
+                payload = await provider.search(
+                    remaining,
+                    attempt_config,
+                    float(config.provider_timeout),
+                    verbose,
+                )
+        except Exception as exc:
+            final_error = str(exc)
+            if attempt < max_attempts:
+                await asyncio.sleep(2 ** (attempt - 1))
+                continue
+            break
+
+        searches = payload.get("searches")
+        if not isinstance(searches, list):
+            final_error = "Provider returned invalid search payload"
+            if attempt < max_attempts:
+                await asyncio.sleep(2 ** (attempt - 1))
+                continue
+            break
+
+        searches_by_query: dict[str, dict[str, Any]] = {}
+        for item in searches:
+            if not isinstance(item, dict):
+                continue
+            item_query = item.get("query")
+            if isinstance(item_query, str):
+                searches_by_query[item_query] = item
+
+        retryable: list[str] = []
+        for query in remaining:
+            item = searches_by_query.get(query)
+            if item is None:
+                retryable.append(query)
+                continue
+
+            item_failure_kind = _search_item_failure_kind(item)
+            if item_failure_kind == "empty_results":
+                empty_queries.append(query)
+                query_had_empty_results.add(query)
+                if empty_failure_attempt == 0:
+                    empty_failure_attempt = attempt
+                continue
+
+            if item_failure_kind == "provider_error":
+                retryable.append(query)
+                continue
+
+            results_by_query[query] = {
+                "query": query,
+                "results": item.get("results", []),
+                **({"error": item["error"]} if "error" in item else {}),
+            }
+
+        if not retryable:
+            return [], empty_queries
+
+        final_error = _summarize_item_errors(
+            searches_by_query,
+            retryable,
+            f"Search provider '{provider_name}' failed",
+        )
+        remaining = retryable
+        if attempt < max_attempts:
+            await asyncio.sleep(2 ** (attempt - 1))
+
+    if empty_queries:
+        provider_failures.append(
+            _provider_failure(
+                "search",
+                provider_name,
+                provider_type,
+                empty_queries.copy(),
+                f"Search provider '{provider_name}' returned no results",
+                "execute",
+                empty_failure_attempt or attempts_made,
+                "empty_results",
+                attempt_key=f"key_{key_idx + 1}",
+            )
+        )
+
+    provider_failures.append(
+        _provider_failure(
+            "search",
+            provider_name,
+            provider_type,
+            remaining,
+            final_error,
+            "execute",
+            attempts_made,
+            "provider_error",
+            attempt_key=f"key_{key_idx + 1}",
+        )
+    )
+
+    return remaining, empty_queries
+
+
 async def run_search_chain(
     queries: list[str],
     config: Config,
@@ -127,7 +264,6 @@ async def run_search_chain(
         try:
             provider_class = resolve_search_provider(provider_name, config.providers)
             provider = provider_class()
-            provider.validate_config(config.providers[provider_name])
         except ValueError as exc:
             provider_failures.append(
                 _provider_failure(
@@ -143,115 +279,94 @@ async def run_search_chain(
             )
             continue
 
-        retry_queries = pending_queries.copy()
-        empty_queries: list[str] = []
-        empty_failure_attempt = 0
-        final_error = f"Search provider '{provider_name}' failed"
-        attempts_made = 0
-        max_attempts = config.search_provider_retries + 1
+        attempt_configs = build_api_key_attempt_configs(provider_config, provider_name)
+        if not attempt_configs:
+            # Zero-key provider: run once with the original config
+            attempt_configs = [config.providers[provider_name]]
 
-        for attempt in range(1, max_attempts + 1):
-            attempts_made = attempt
+        remaining_queries = pending_queries.copy()
+        last_empty: list[str] = []
+
+        for key_idx, attempt_config in enumerate(attempt_configs):
+            if not remaining_queries:
+                break
+
             try:
-                with _quiet_provider_io(verbose):
-                    payload = await provider.search(
-                        retry_queries,
-                        config.providers[provider_name],
-                        float(config.provider_timeout),
-                        verbose,
+                provider.validate_config(attempt_config)
+            except ValueError as exc:
+                provider_failures.append(
+                    _provider_failure(
+                        "search",
+                        provider_name,
+                        provider_type,
+                        remaining_queries.copy(),
+                        str(exc),
+                        "validate",
+                        0,
+                        "validation_error",
+                        attempt_key=f"key_{key_idx + 1}",
                     )
-            except Exception as exc:
-                final_error = str(exc)
-                if attempt < max_attempts:
-                    await asyncio.sleep(2 ** (attempt - 1))
-                    continue
-                break
-
-            searches = payload.get("searches")
-            if not isinstance(searches, list):
-                final_error = "Provider returned invalid search payload"
-                if attempt < max_attempts:
-                    await asyncio.sleep(2 ** (attempt - 1))
-                    continue
-                break
-
-            searches_by_query: dict[str, dict[str, Any]] = {}
-            for item in searches:
-                if not isinstance(item, dict):
-                    continue
-                item_query = item.get("query")
-                if isinstance(item_query, str):
-                    searches_by_query[item_query] = item
-
-            retryable_queries: list[str] = []
-            for query in retry_queries:
-                item = searches_by_query.get(query)
-                if item is None:
-                    retryable_queries.append(query)
-                    continue
-
-                failure_kind = _search_item_failure_kind(item)
-                if failure_kind == "empty_results":
-                    empty_queries.append(query)
-                    query_had_empty_results.add(query)
-                    if empty_failure_attempt == 0:
-                        empty_failure_attempt = attempt
-                    continue
-
-                if failure_kind == "provider_error":
-                    retryable_queries.append(query)
-                    continue
-
-                results_by_query[query] = {
-                    "query": query,
-                    "results": item.get("results", []),
-                    **({"error": item["error"]} if "error" in item else {}),
-                }
-
-            if not retryable_queries:
-                retry_queries = []
-                break
-
-            final_error = _summarize_item_errors(
-                searches_by_query,
-                retryable_queries,
-                f"Search provider '{provider_name}' failed",
-            )
-            retry_queries = retryable_queries
-            if attempt < max_attempts:
-                await asyncio.sleep(2 ** (attempt - 1))
-
-        if empty_queries:
-            provider_failures.append(
-                _provider_failure(
-                    "search",
-                    provider_name,
-                    provider_type,
-                    empty_queries.copy(),
-                    f"Search provider '{provider_name}' returned no results",
-                    "execute",
-                    empty_failure_attempt or attempts_made,
-                    "empty_results",
                 )
-            )
+                continue
 
-        if retry_queries:
-            provider_failures.append(
-                _provider_failure(
-                    "search",
-                    provider_name,
-                    provider_type,
-                    retry_queries.copy(),
-                    final_error,
-                    "execute",
-                    attempts_made,
-                    "provider_error",
-                )
+            retryable, empty = await _run_search_attempt(
+                provider,
+                config,
+                provider_name,
+                provider_type,
+                remaining_queries,
+                attempt_config,
+                key_idx,
+                verbose,
+                query_had_empty_results,
+                results_by_query,
+                provider_failures,
             )
-            pending_queries = retry_queries + empty_queries
+            remaining_queries = retryable + empty
+            last_empty = empty
+
+            if not retryable:
+                remaining_queries = empty
+                break
+
+        if remaining_queries:
+            are_only_empty = (remaining_queries == last_empty)
+
+            if are_only_empty:
+                # Purely empty-result queries pass to the next provider.
+                provider_failures.append(
+                    _provider_failure(
+                        "search",
+                        provider_name,
+                        provider_type,
+                        remaining_queries.copy(),
+                        f"Search provider '{provider_name}' returned no results",
+                        "execute",
+                        1,
+                        "empty_results",
+                    )
+                )
+                pending_queries = remaining_queries
+                continue
+
+            # Queries with actual errors remain after all key attempts.
+            if len(attempt_configs) > 1:
+                provider_failures.append(
+                    _provider_failure(
+                        "search",
+                        provider_name,
+                        provider_type,
+                        remaining_queries.copy(),
+                        f"All API keys exhausted for '{provider_name}'",
+                        "execute",
+                        1,
+                        "api_key_exhausted",
+                    )
+                )
+            pending_queries = remaining_queries
             continue
 
-        pending_queries = empty_queries
+        pending_queries = last_empty
 
     for query in pending_queries:
         final_error = (
@@ -276,6 +391,105 @@ async def run_search_chain(
     }
 
 
+async def _run_fetch_attempt(
+    provider: Any,
+    config: Config,
+    provider_name: str,
+    provider_type: str | None,
+    remaining_urls: list[str],
+    attempt_config: dict[str, Any],
+    key_idx: int,
+    verbose: bool,
+    pages_by_url: dict[str, dict[str, Any]],
+    provider_failures: list[dict[str, Any]],
+) -> list[str]:
+    """Execute one per-key fetch attempt with the same-provider retry loop.
+
+    Returns the list of URLs still unresolved after this attempt.
+    Preserves successful pages in *pages_by_url* and appends failure
+    metadata to *provider_failures*.
+    """
+    urls = remaining_urls.copy()
+    final_error = f"Fetch provider '{provider_name}' failed"
+    attempts_made = 0
+    max_attempts = config.fetch_provider_retries + 1
+
+    for attempt in range(1, max_attempts + 1):
+        attempts_made = attempt
+        try:
+            with _quiet_provider_io(verbose):
+                payload = await provider.fetch(
+                    urls,
+                    attempt_config,
+                    float(config.provider_timeout),
+                    verbose,
+                )
+        except Exception as exc:
+            final_error = str(exc)
+            if attempt < max_attempts:
+                await asyncio.sleep(2 ** (attempt - 1))
+                continue
+            break
+
+        pages = payload.get("pages")
+        if not isinstance(pages, list):
+            final_error = "Provider returned invalid fetch payload"
+            if attempt < max_attempts:
+                await asyncio.sleep(2 ** (attempt - 1))
+                continue
+            break
+
+        pages_by_url_batch: dict[str, dict[str, Any]] = {}
+        for item in pages:
+            if not isinstance(item, dict):
+                continue
+            item_url = item.get("url")
+            if isinstance(item_url, str):
+                pages_by_url_batch[item_url] = item
+
+        failed_urls: list[str] = []
+        for url in urls:
+            item = pages_by_url_batch.get(url)
+            if item is None:
+                failed_urls.append(url)
+                continue
+            pages_by_url[url] = {
+                "url": url,
+                "content": item.get("content", ""),
+                **({"error": item["error"]} if "error" in item else {}),
+            }
+            if item.get("error"):
+                failed_urls.append(url)
+
+        if not failed_urls:
+            return []
+
+        final_error = _summarize_item_errors(
+            pages_by_url_batch,
+            failed_urls,
+            f"Fetch provider '{provider_name}' failed",
+        )
+        urls = failed_urls
+        if attempt < max_attempts:
+            await asyncio.sleep(2 ** (attempt - 1))
+
+    provider_failures.append(
+        _provider_failure(
+            "fetch",
+            provider_name,
+            provider_type,
+            urls,
+            final_error,
+            "execute",
+            attempts_made,
+            "provider_error",
+            attempt_key=f"key_{key_idx + 1}",
+        )
+    )
+
+    return urls
+
+
 async def run_fetch_chain(
     urls: list[str],
     config: Config,
@@ -297,7 +511,6 @@ async def run_fetch_chain(
         try:
             provider_class = resolve_fetch_provider(provider_name, config.providers)
             provider = provider_class()
-            provider.validate_config(config.providers[provider_name])
         except ValueError as exc:
             provider_failures.append(
                 _provider_failure(
@@ -313,70 +526,49 @@ async def run_fetch_chain(
             )
             continue
 
+        attempt_configs = build_api_key_attempt_configs(provider_config, provider_name)
+        if not attempt_configs:
+            attempt_configs = [config.providers[provider_name]]
+
         remaining_urls = pending_urls.copy()
-        final_error = f"Fetch provider '{provider_name}' failed"
-        attempts_made = 0
-        max_attempts = config.fetch_provider_retries + 1
 
-        for attempt in range(1, max_attempts + 1):
-            attempts_made = attempt
+        for key_idx, attempt_config in enumerate(attempt_configs):
+            if not remaining_urls:
+                break
+
             try:
-                with _quiet_provider_io(verbose):
-                    payload = await provider.fetch(
-                        remaining_urls,
-                        config.providers[provider_name],
-                        float(config.provider_timeout),
-                        verbose,
+                provider.validate_config(attempt_config)
+            except ValueError as exc:
+                provider_failures.append(
+                    _provider_failure(
+                        "fetch",
+                        provider_name,
+                        provider_type,
+                        remaining_urls.copy(),
+                        str(exc),
+                        "validate",
+                        0,
+                        "validation_error",
+                        attempt_key=f"key_{key_idx + 1}",
                     )
-            except Exception as exc:
-                final_error = str(exc)
-                if attempt < max_attempts:
-                    await asyncio.sleep(2 ** (attempt - 1))
-                    continue
-                break
+                )
+                continue
 
-            pages = payload.get("pages")
-            if not isinstance(pages, list):
-                final_error = "Provider returned invalid fetch payload"
-                if attempt < max_attempts:
-                    await asyncio.sleep(2 ** (attempt - 1))
-                    continue
-                break
-
-            pages_by_url_batch: dict[str, dict[str, Any]] = {}
-            for item in pages:
-                if not isinstance(item, dict):
-                    continue
-                item_url = item.get("url")
-                if isinstance(item_url, str):
-                    pages_by_url_batch[item_url] = item
-
-            failed_urls: list[str] = []
-            for url in remaining_urls:
-                item = pages_by_url_batch.get(url)
-                if item is None:
-                    failed_urls.append(url)
-                    continue
-                pages_by_url[url] = {
-                    "url": url,
-                    "content": item.get("content", ""),
-                    **({"error": item["error"]} if "error" in item else {}),
-                }
-                if item.get("error"):
-                    failed_urls.append(url)
-
-            if not failed_urls:
-                remaining_urls = []
-                break
-
-            final_error = _summarize_item_errors(
-                pages_by_url_batch,
-                failed_urls,
-                f"Fetch provider '{provider_name}' failed",
+            remaining_urls = await _run_fetch_attempt(
+                provider,
+                config,
+                provider_name,
+                provider_type,
+                remaining_urls,
+                attempt_config,
+                key_idx,
+                verbose,
+                pages_by_url,
+                provider_failures,
             )
-            remaining_urls = failed_urls
-            if attempt < max_attempts:
-                await asyncio.sleep(2 ** (attempt - 1))
+
+            if not remaining_urls:
+                break
 
         if remaining_urls:
             provider_failures.append(
@@ -385,10 +577,10 @@ async def run_fetch_chain(
                     provider_name,
                     provider_type,
                     remaining_urls.copy(),
-                    final_error,
+                    f"All API keys exhausted for '{provider_name}'",
                     "execute",
-                    attempts_made,
-                    "provider_error",
+                    1,
+                    "api_key_exhausted",
                 )
             )
             pending_urls = remaining_urls
@@ -429,7 +621,6 @@ async def run_llm_chain(
         try:
             provider_class = resolve_llm_provider(provider_name, config.providers)
             provider = provider_class()
-            provider.validate_config(config.providers[provider_name])
         except ValueError as exc:
             provider_failures.append(
                 _provider_failure(
@@ -445,30 +636,76 @@ async def run_llm_chain(
             )
             continue
 
-        try:
-            with _quiet_provider_io(verbose):
-                return await provider.complete(
-                    messages=messages,
-                    tools=tools,
-                    config=config.providers[provider_name],
-                    verbose=verbose,
-                    max_tokens=max_tokens,
+        attempt_configs = build_api_key_attempt_configs(provider_config, provider_name)
+        if not attempt_configs:
+            attempt_configs = [config.providers[provider_name]]
+
+        all_keys_failed = True
+
+        for key_idx, attempt_config in enumerate(attempt_configs):
+            try:
+                provider.validate_config(attempt_config)
+            except ValueError as exc:
+                provider_failures.append(
+                    _provider_failure(
+                        "llm",
+                        provider_name,
+                        provider_type,
+                        [provider_name],
+                        str(exc),
+                        "validate",
+                        0,
+                        "validation_error",
+                        attempt_key=f"key_{key_idx + 1}",
+                    )
                 )
-        except Exception as exc:
+                continue
+
+            try:
+                with _quiet_provider_io(verbose):
+                    response = await provider.complete(
+                        messages=messages,
+                        tools=tools,
+                        config=attempt_config,
+                        verbose=verbose,
+                        max_tokens=max_tokens,
+                    )
+            except Exception as exc:
+                provider_failures.append(
+                    _provider_failure(
+                        "llm",
+                        provider_name,
+                        provider_type,
+                        [provider_name],
+                        str(exc),
+                        "execute",
+                        1,
+                        "provider_error",
+                        attempt_key=f"key_{key_idx + 1}",
+                    )
+                )
+                if verbose:
+                    print(f"[LLM] Provider '{provider_name}' key_{key_idx + 1} failed: {exc}")
+                continue
+
+            all_keys_failed = False
+            return response
+
+        if all_keys_failed:
             provider_failures.append(
                 _provider_failure(
                     "llm",
                     provider_name,
                     provider_type,
                     [provider_name],
-                    str(exc),
+                    f"All API keys exhausted for '{provider_name}'",
                     "execute",
                     1,
-                    "provider_error",
+                    "api_key_exhausted",
                 )
             )
             if verbose:
-                print(f"[LLM] Provider '{provider_name}' failed: {exc}")
+                print(f"[LLM] All API keys exhausted for '{provider_name}'")
 
     raise ProviderChainError("llm", provider_failures)
 

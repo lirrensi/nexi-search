@@ -25,6 +25,8 @@ NEXI is an intelligent research CLI built around an agentic search loop powered 
 - **Multi-Query Parallel Search** — Execute 1-5 search queries in parallel for efficiency
 - **Intelligent Content Extraction** — Three modes: full content, chunk-based selection, or LLM summarization
 - **Pluggable Provider Chains** — Search, fetch, and LLM backends are interchangeable and ordered by preference
+- **Multi-Key Provider Reliability** — Each provider instance supports multiple API keys with configurable fallback or round-robin strategies
+- **Custom Python Providers** — Drop a Python file next to the config to add custom search, fetch, or LLM backends without modifying the NEXI codebase
 - **Automatic Failover** — Hard provider failures and empty search responses fall through to the next configured backend without aborting the workflow
 - **Automatic Context Management** — Prevents token overflow via intelligent conversation compaction
 - **Citation System** — Automatic source attribution with stable numbering throughout search
@@ -44,6 +46,8 @@ NEXI is an intelligent research CLI built around an agentic search loop powered 
 - **MCP Server** — Expose NEXI as Model Context Protocol tools for the full agent, direct search, and direct fetch surfaces
 - **Provider-Orchestrated LLM Access** — Works with multiple OpenAI-compatible providers via ordered fallback chains
 - **Provider-Orchestrated Search/Fetch** — Search and content retrieval providers can be mixed, reordered, and replaced independently
+- **Multi-Key Support** — Each provider config can specify a list of API keys with `fallback` or `round_robin` strategy for higher reliability
+- **Custom Providers** — Define search, fetch, or LLM backends as local Python files referenced via `provider-<name>` type strings
 
 ---
 
@@ -96,8 +100,13 @@ NEXI is an intelligent research CLI built around an agentic search loop powered 
 │  ┌──────────────────────┐      ┌──────────────────────────────┐ │
 │  │   LLM Providers      │      │ Search / Fetch Providers     │ │
 │  │   (ordered chain)    │      │ (ordered chains)             │ │
-│  │ - OpenRouter         │      │ - Jina / SearXNG             │ │
-│  │ - OpenAI-compatible  │      │ - Exa / Tavily / others      │ │
+│  │ - OpenAI-compatible  │      │ - Jina / SearXNG             │ │
+│  │ e.g. OpenRouter,     │      │ - Exa / Tavily / Firecrawl   │ │
+│  │   OpenAI, local LLM  │      │ - Brave / SerpAPI / Serper   │ │
+│  │                      │      │ - Linkup / Perplexity        │ │
+│  │                      │      │ - snitchmd / Crawl4AI        │ │
+│  │                      │      │ - markdown_new / Trafilatura │ │
+│  │                      │      │ - Playwright / custom Python │ │
 │  └──────────────────────┘      └──────────────────────────────┘ │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -138,9 +147,9 @@ nexi onboard
 
 1. User already has the generated TOML template
 2. NEXI runs a small wizard focused on the basics
-3. Wizard helps activate one LLM provider and one search provider
-4. Existing zero-config fetch defaults stay enabled unless the user changes them
-5. Crawl4AI remains available as an opt-in example, not a default activation
+3. Wizard helps activate one LLM provider and one search provider from the shipped options
+4. Existing zero-config fetch defaults (`snitchmd`, `special_trafilatura`, `special_playwright`, `markdown_new`) stay enabled unless the user opts out
+5. Crawl4AI is offered as a fetch option alongside other providers if the user customizes the fetch chain
 6. Advanced settings remain in the file for manual editing
 
 ### Flow 4: Deep Research
@@ -209,28 +218,32 @@ nexi --prev
 ```bash
 nexi-search "rust async trait objects"
 nexi-search --provider jina "rust async trait objects"
+nexi-search --json "rust async trait objects"
 ```
 
 1. User or agent calls the direct search binary
 2. By default, NEXI executes the configured search backend chain
 3. `--provider NAME` narrows execution to one named provider and bypasses the fallback chain
-4. Failed queries retry within the active provider, and empty-result queries fall through to the next provider immediately unless overridden
-5. Plain text or JSON results are written to stdout
+4. `--json` returns structured JSON output suitable for scripts and agents
+5. Failed queries retry within the active provider, and empty-result queries fall through to the next provider immediately unless overridden
+6. Plain text or JSON results are written to stdout
 
 ### Flow 10: Direct Fetch Tool
 
 ```bash
 nexi-fetch "https://example.com/spec"
 nexi-fetch --provider special_trafilatura "https://example.com/spec"
+nexi-fetch --json "https://example.com/spec"
 ```
 
 1. User or agent calls the direct fetch binary
 2. By default, NEXI executes the configured fetch backend chain
 3. `--provider NAME` narrows execution to one named provider and bypasses the fallback chain
-4. Failed URLs retry within the active provider, then fall through to the next provider unless overridden
-5. Direct fetch output is capped at 8000 tokens per page outside agent mode
-6. Oversized pages spill the full content to a temp file and print the absolute path alongside the truncated output
-7. Extracted content is written to stdout and can be piped to files or other tools
+4. `--json` returns structured JSON output with provider failure metadata
+5. Failed URLs retry within the active provider, then fall through to the next provider unless overridden
+6. Direct fetch output is capped at 8000 tokens per page outside agent mode
+7. Oversized pages spill the full content to a temp file and print the absolute path alongside the truncated output
+8. Extracted content is written to stdout and can be piped to files or other tools
 
 ---
 
@@ -324,12 +337,14 @@ The search loop **MUST** terminate when **any** of these conditions are met:
 
 ### Error Handling
 
-- Missing config does not start a search - NEXI creates the template, prints the path, warns, and exits
+- Missing config does not start a search — NEXI creates the template, prints the path, warns, and exits
+- `nexi doctor` runs config readiness checks for all three public surfaces (`nexi`, `nexi-search`, `nexi-fetch`)
 - Individual tool failures do not abort search — errors returned in results
 - Search and fetch retry failed items within the active provider before failing over
 - LLM provider failures trigger immediate provider failover for the current run
 - If a listed provider is missing required config, validation fails before execution
 - Search and fetch provider retries use exponential backoff before failover
+- Multi-key APIs try each key in configured order (`fallback` or `round_robin`) before declaring provider failure
 - Network errors are caught and reported, search continues
 - Keyboard interrupt gracefully exits with code 130
 
@@ -383,15 +398,38 @@ The search loop **MUST** terminate when **any** of these conditions are met:
 | `search_provider_retries` | `2` | Retry attempts per search provider before failover |
 | `fetch_provider_retries` | `2` | Retry attempts per fetch provider before failover |
 
+### Provider Config Fields
+
+Each provider config object under `[providers.<name>]` may include:
+
+| Field | Description |
+|-------|-------------|
+| `type` | **Required.** Provider type string (e.g. `openai_compatible`, `jina`, `searxng`, `provider-<file>`) |
+| `api_key` | API key as a string or a **list of strings** for multi-key support |
+| `api_key_strategy` | `"fallback"` (default) — try keys in order; `"round_robin"` — rotate starting key per request |
+
+Provider-specific fields (like `model`, `base_url`, `max_results`, etc.) are documented per provider type.
+
 ### Default Template Shape
 
-The Crawl4AI-backed fetch provider remains supported as an opt-in example while the generated default template keeps the quiet zero-config fetch providers active.
+The generated default template keeps quiet zero-config fetch providers active by default and shows commented examples for LLM, search, and additional fetch providers.
 
 ```toml
-# Activate at least one LLM and one search provider before running `nexi`.
+# Activate at least one LLM provider and one search provider before running `nexi`.
+# The default fetch chain uses the quiet providers only.
+# Provider instances are shared across chains.
+# api_key may be either a single string or a list of strings (for multiple keys).
+# api_key_strategy controls per-provider key behaviour:
+#   "fallback"    - try keys in order until one succeeds (default)
+#   "round_robin" - rotate the starting key across requests in the same process
+# Define each [providers.<name>] table only once, then reuse that name in
+# search_backends and fetch_backends.
+# If you need different settings for search and fetch, use different names
+# like "jina_search" and "jina_fetch".
+
 llm_backends = []
 search_backends = []
-fetch_backends = ["special_trafilatura", "special_playwright", "markdown_new"]
+fetch_backends = ["snitchmd", "special_trafilatura", "special_playwright", "markdown_new"]
 
 default_effort = "m"
 max_context = 128000
@@ -404,6 +442,11 @@ direct_fetch_max_tokens = 8000
 search_provider_retries = 2
 fetch_provider_retries = 2
 
+# Active provider configs
+[providers.snitchmd]
+type = "snitchmd"
+mode = "precision"
+
 [providers.special_trafilatura]
 type = "special_trafilatura"
 
@@ -414,27 +457,9 @@ type = "special_playwright"
 type = "markdown_new"
 method = "auto"
 retain_images = false
-
-# [providers.crawl4ai_local]
-# type = "crawl4ai"
-# headless = true
-
-# Uncomment one LLM provider to activate it.
-# llm_backends = ["openrouter"]
-#
-# [providers.openrouter]
-# type = "openai_compatible"
-# base_url = "https://openrouter.ai/api/v1"
-# api_key = "<your_api_key>"
-# model = "google/gemini-2.5-flash-lite"
-
-# Uncomment one search provider to activate it.
-# search_backends = ["searxng"]
-#
-# [providers.searxng]
-# type = "searxng"
-# base_url = "https://search.example.org"
 ```
+
+Commenting out the active LLM/search lines and their provider configs keeps them ready to activate by uncommenting. The full generated template includes commented examples for all shipped providers.
 
 - Each listed backend name MUST have a matching entry in `providers`
 - Each provider config object MUST declare its provider `type`
@@ -529,11 +554,13 @@ NEXI deliberately does **NOT** aim to be:
 
 | Issue | Solution |
 |-------|----------|
-| 401 Unauthorized | Check provider config and API keys |
-| 429 Rate Limit | Wait or rely on the next configured provider |
+| 401 Unauthorized | Check provider config and API keys (use `nexi doctor`) |
+| 429 Rate Limit | Add more API keys to the provider config for multi-key fallback |
+| All providers failed | Use `nexi doctor` to check which providers are misconfigured |
 | Search finalized early under context guard rails | Increase `max_context` or tune compaction settings |
 | UTF-8 garbled (Windows) | Use `--plain` or Windows Terminal |
 | MCP Server not found | Install with `uv sync --group mcp` |
+| `nexi` says config not ready | Run `nexi doctor` to see specific readiness issues |
 
 ---
 

@@ -19,11 +19,29 @@ For the canonical support matrix, see `docs/provider-matrix.md`.
 | Zero-config | Usually works without a key |
 | Custom | A `provider-<file>.py` file in the config dir |
 
-## Shared rule
+## Shared rules
 
-Define each provider instance once, then reuse it in `llm_backends`, `search_backends`, or `fetch_backends`.
+1. Define each provider instance once, then reuse it in `llm_backends`, `search_backends`, or `fetch_backends`.
+2. If search and fetch need different settings, use two instance names, like `jina_search` and `jina_fetch`.
 
-If search and fetch need different settings, use two instance names, like `jina_search` and `jina_fetch`.
+### Multi-Key Support
+
+Every credentialed provider accepts `api_key` as either a **single string** or a **list of strings**:
+
+```toml
+# One key (backward compatible)
+api_key = "<your_api_key>"
+
+# Multiple keys — tried in order with fallback, or rotated
+api_key = ["<key_one>", "<key_two>"]
+api_key_strategy = "fallback"
+```
+
+The `api_key_strategy` field controls per-provider key behaviour:
+- `"fallback"` (default) — tries keys in order until one succeeds, then moves to the next provider if all fail
+- `"round_robin"` — rotates the starting key across requests in the same process
+
+All credentialed provider examples below include `api_key_strategy`. Zero-key providers (trafilatura, playwright, markdown_new, snitchmd, crawl4ai) do not use this field.
 
 ---
 
@@ -46,6 +64,7 @@ llm_backends = ["openrouter"]
 type = "openai_compatible"
 base_url = "https://openrouter.ai/api/v1"
 api_key = "<your_api_key>"
+api_key_strategy = "fallback"
 model = "google/gemini-2.5-flash-lite"
 ```
 
@@ -65,6 +84,7 @@ Setup:
 type = "openai_compatible"
 base_url = "https://api.openai.com/v1"
 api_key = "<your_api_key>"
+api_key_strategy = "fallback"
 model = "gpt-4.1-mini"
 ```
 
@@ -84,6 +104,7 @@ Setup:
 type = "openai_compatible"
 base_url = "http://localhost:11434/v1"
 api_key = "local-key"
+api_key_strategy = "fallback"
 model = "your-model"
 ```
 
@@ -122,6 +143,7 @@ search_backends = ["jina"]
 [providers.jina]
 type = "jina"
 api_key = "<your_api_key>"
+api_key_strategy = "fallback"
 ```
 
 Good for: simple hosted search.
@@ -158,13 +180,14 @@ Setup:
 ```toml
 [providers.tavily]
 type = "tavily"
-api_key = "<your_api_key>"
+api_key = ["<your_first_key>", "<your_second_key>"]
+api_key_strategy = "fallback"
 search_depth = "basic"
 topic = "general"
 max_results = 5
 ```
 
-Good for: quick search with source grounding.
+Good for: quick search with source grounding. Supports multiple keys — list two or more keys for automatic fallback.
 
 ### `exa` — Cloud/API
 
@@ -179,6 +202,7 @@ Setup:
 [providers.exa]
 type = "exa"
 api_key = "<your_api_key>"
+api_key_strategy = "fallback"
 num_results = 5
 text = true
 ```
@@ -198,6 +222,7 @@ Setup:
 [providers.firecrawl]
 type = "firecrawl"
 api_key = "<your_api_key>"
+api_key_strategy = "fallback"
 only_main_content = true
 formats = ["markdown"]
 limit = 5
@@ -218,6 +243,7 @@ Setup:
 [providers.linkup]
 type = "linkup"
 api_key = "<your_api_key>"
+api_key_strategy = "fallback"
 depth = "standard"
 output_type = "searchResults"
 ```
@@ -230,6 +256,7 @@ What it is: search-only provider.
 [providers.brave]
 type = "brave"
 api_key = "<your_api_key>"
+api_key_strategy = "fallback"
 count = 5
 ```
 
@@ -241,6 +268,7 @@ What it is: search-only SERP API.
 [providers.serpapi]
 type = "serpapi"
 api_key = "<your_api_key>"
+api_key_strategy = "fallback"
 engine = "google"
 ```
 
@@ -252,6 +280,7 @@ What it is: search-only SERP API.
 [providers.serper]
 type = "serper"
 api_key = "<your_api_key>"
+api_key_strategy = "fallback"
 num = 5
 ```
 
@@ -263,6 +292,7 @@ What it is: search-only provider.
 [providers.perplexity]
 type = "perplexity_search"
 api_key = "<your_api_key>"
+api_key_strategy = "fallback"
 max_results = 5
 ```
 

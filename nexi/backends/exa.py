@@ -6,6 +6,7 @@ from typing import Any
 
 import httpx
 
+from nexi.backends.api_keys import normalize_api_keys, validate_api_keys
 from nexi.backends.http_client import get_http_client
 
 BASE_URL = "https://api.exa.ai"
@@ -18,9 +19,9 @@ class ExaSearchProvider:
 
     def validate_config(self, config: dict[str, Any]) -> None:
         """Validate Exa search config."""
-        api_key = config.get("api_key")
-        if not isinstance(api_key, str) or not api_key.strip():
-            raise ValueError("Exa api_key must be a non-empty string")
+        validate_api_keys(config, "Exa")
+        if not normalize_api_keys(config):
+            raise ValueError("Exa api_key must be a non-empty string or list")
 
     async def search(
         self,
@@ -44,9 +45,9 @@ class ExaFetchProvider:
 
     def validate_config(self, config: dict[str, Any]) -> None:
         """Validate Exa fetch config."""
-        api_key = config.get("api_key")
-        if not isinstance(api_key, str) or not api_key.strip():
-            raise ValueError("Exa api_key must be a non-empty string")
+        validate_api_keys(config, "Exa")
+        if not normalize_api_keys(config):
+            raise ValueError("Exa api_key must be a non-empty string or list")
 
     async def fetch(
         self,

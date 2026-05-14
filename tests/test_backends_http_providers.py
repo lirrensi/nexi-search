@@ -9,7 +9,9 @@ import pytest
 from nexi.backends.brave import BraveSearchProvider
 from nexi.backends.exa import ExaFetchProvider, ExaSearchProvider
 from nexi.backends.firecrawl import FirecrawlFetchProvider, FirecrawlSearchProvider
+from nexi.backends.jina import JinaFetchProvider, JinaSearchProvider
 from nexi.backends.linkup import LinkupFetchProvider, LinkupSearchProvider
+from nexi.backends.openai_compatible import OpenAICompatibleLLMProvider
 from nexi.backends.perplexity_search import PerplexitySearchProvider
 from nexi.backends.searxng import SearXNGSearchProvider
 from nexi.backends.serpapi import SerpAPISearchProvider
@@ -393,3 +395,91 @@ def test_searxng_search_provider_rejects_missing_base_url() -> None:
     """SearXNG search config requires a base_url."""
     with pytest.raises(ValueError, match="base_url"):
         SearXNGSearchProvider().validate_config({"format": "json"})
+
+
+# ---------------------------------------------------------------------------
+# API-key list-form validation for credentialed providers
+# ---------------------------------------------------------------------------
+
+
+def test_credentialed_provider_accepts_string_api_key() -> None:
+    """All credentialed providers still accept single-string api_key."""
+    # Each provider must have required non-key fields too
+    configs = [
+        (BraveSearchProvider(), {"api_key": "sk-test"}),
+        (ExaSearchProvider(), {"api_key": "sk-test", "num_results": 5}),
+        (ExaFetchProvider(), {"api_key": "sk-test"}),
+        (FirecrawlSearchProvider(), {"api_key": "sk-test"}),
+        (FirecrawlFetchProvider(), {"api_key": "sk-test"}),
+        (LinkupSearchProvider(), {"api_key": "sk-test"}),
+        (LinkupFetchProvider(), {"api_key": "sk-test"}),
+        (OpenAICompatibleLLMProvider(), {
+            "api_key": "sk-test",
+            "base_url": "https://api.test.com/v1",
+            "model": "gpt-4",
+        }),
+        (PerplexitySearchProvider(), {"api_key": "sk-test"}),
+        (SerpAPISearchProvider(), {"api_key": "sk-test"}),
+        (SerperSearchProvider(), {"api_key": "sk-test"}),
+        (TavilySearchProvider(), {"api_key": "sk-test"}),
+        (TavilyFetchProvider(), {"api_key": "sk-test"}),
+    ]
+    for provider, config in configs:
+        provider.validate_config(config)  # no raise
+
+
+def test_credentialed_provider_accepts_list_api_key() -> None:
+    """All credentialed providers accept list-form api_key."""
+    configs = [
+        (BraveSearchProvider(), {"api_key": ["k1", "k2"]}),
+        (ExaSearchProvider(), {"api_key": ["k1", "k2"], "num_results": 5}),
+        (ExaFetchProvider(), {"api_key": ["k1", "k2"]}),
+        (FirecrawlSearchProvider(), {"api_key": ["k1", "k2"]}),
+        (FirecrawlFetchProvider(), {"api_key": ["k1", "k2"]}),
+        (LinkupSearchProvider(), {"api_key": ["k1", "k2"]}),
+        (LinkupFetchProvider(), {"api_key": ["k1", "k2"]}),
+        (OpenAICompatibleLLMProvider(), {
+            "api_key": ["k1", "k2"],
+            "base_url": "https://api.test.com/v1",
+            "model": "gpt-4",
+        }),
+        (PerplexitySearchProvider(), {"api_key": ["k1", "k2"]}),
+        (SerpAPISearchProvider(), {"api_key": ["k1", "k2"]}),
+        (SerperSearchProvider(), {"api_key": ["k1", "k2"]}),
+        (TavilySearchProvider(), {"api_key": ["k1", "k2"]}),
+        (TavilyFetchProvider(), {"api_key": ["k1", "k2"]}),
+    ]
+    for provider, config in configs:
+        provider.validate_config(config)  # no raise
+
+
+def test_credentialed_provider_rejects_blank_api_key() -> None:
+    """Credentialed providers reject blank api_key."""
+    providers = [
+        BraveSearchProvider(),
+        ExaSearchProvider(),
+        FirecrawlSearchProvider(),
+        LinkupSearchProvider(),
+        PerplexitySearchProvider(),
+        SerpAPISearchProvider(),
+        SerperSearchProvider(),
+        TavilySearchProvider(),
+        TavilyFetchProvider(),
+    ]
+    for provider in providers:
+        with pytest.raises(ValueError, match="must"):
+            provider.validate_config({"api_key": ""})
+
+
+def test_jina_accepts_missing_api_key() -> None:
+    """Jina providers accept missing api_key (optional-key behaviour)."""
+    JinaSearchProvider().validate_config({"type": "jina"})
+    JinaFetchProvider().validate_config({"type": "jina"})
+    JinaSearchProvider().validate_config({"api_key": None})
+    JinaFetchProvider().validate_config({"api_key": None})
+
+
+def test_jina_accepts_list_api_key() -> None:
+    """Jina providers accept list-form api_key."""
+    JinaSearchProvider().validate_config({"api_key": ["k1", "k2"]})
+    JinaFetchProvider().validate_config({"api_key": ["k1", "k2"]})
